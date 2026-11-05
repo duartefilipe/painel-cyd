@@ -47,6 +47,26 @@ O navegador abre no painel. No Windows, depois da primeira vez, basta dar duplo 
 Para os compromissos aparecerem, conecte o Google Agenda:
 [docs/google-agenda.md](docs/google-agenda.md).
 
+## O que precisa estar rodando
+
+| Peça | Onde vive | Precisa subir toda vez? |
+|---|---|---|
+| Firmware | memória flash da placa | **não**: gravou uma vez, a placa liga já com ele |
+| Programa do PC (`pc/app.py`) | PC | **sim**: é ele que manda os dados |
+| Painel web | servido pelo mesmo programa | não sobe sozinho; vem junto com o programa |
+
+A placa não busca nada sozinha. Ligada sem o programa do PC, ela mostra
+**"aguardando o PC..."**. O painel web é só a tela de configuração desse programa: não
+precisa ficar aberto no navegador para a placa funcionar.
+
+Por isso, o normal é o programa **iniciar com o Windows**, em segundo plano
+([como configurar](docs/instalacao.md#iniciar-junto-com-o-windows)). Para abrir o painel
+depois, dê duplo clique em `iniciar.bat`: se o programa já estiver rodando, ele só abre
+o navegador.
+
+Brilho, cores e rotação ficam salvos no PC (`data/config.json`) e vão para a placa em
+cada mensagem. Até o programa subir, a placa usa o padrão.
+
 ## Documentação
 
 | Documento | Conteúdo |

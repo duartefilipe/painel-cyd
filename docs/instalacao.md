@@ -67,14 +67,29 @@ conversor, escolha a porta manualmente no painel.
 
 ### Iniciar junto com o Windows
 
-`iniciar.bat` sobe o programa com `pythonw`, sem janela de terminal. Para ele rodar no
-login:
+O firmware já fica na placa; o que precisa subir a cada login é o programa do PC. A
+forma mais simples é um atalho na pasta de inicialização, rodando sem janela e **sem
+abrir o navegador**:
 
-1. `Win + R` → `shell:startup` → Enter
-2. Crie ali um atalho para o `iniciar.bat`
+```powershell
+# rodar na raiz do projeto
+$pyw = (Get-Command pythonw).Source
+$lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$([Environment]::GetFolderPath('Startup'))\Painel CYD.lnk")
+$lnk.TargetPath = $pyw
+$lnk.Arguments = 'app.py --no-browser'
+$lnk.WorkingDirectory = "$PWD\pc"
+$lnk.WindowStyle = 7
+$lnk.Save()
+```
 
-Para parar: Gerenciador de Tarefas → `pythonw.exe` → Finalizar tarefa.
-O log fica em `data/painel.log`.
+Ou à mão: `Win + R` → `shell:startup` → crie um atalho para o `iniciar.bat` (este abre o
+navegador a cada login).
+
+- **Abrir o painel:** duplo clique em `iniciar.bat`. Com o programa já rodando, ele só abre
+  o navegador; nunca sobe uma segunda cópia brigando pela porta COM.
+- **Parar:** Gerenciador de Tarefas → `pythonw.exe` → Finalizar tarefa.
+- **Tirar da inicialização:** apague `Painel CYD` em `shell:startup`.
+- **Log:** `data/painel.log`.
 
 ## Ajustes de tela
 

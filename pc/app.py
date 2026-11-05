@@ -299,9 +299,22 @@ def api_events():
     return jsonify({"ok": True, "link": ev.get("htmlLink")})
 
 
+def already_running(port: int) -> bool:
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main():
     import sys
     port = config.load()["web_port"]
+    # Ja existe uma copia (a que sobe com o Windows): uma segunda brigaria pela
+    # porta COM. Neste caso, so abre o painel da que esta rodando.
+    if already_running(port):
+        if "--no-browser" not in sys.argv:
+            webbrowser.open(f"http://localhost:{port}")
+        return
     threading.Thread(target=weather_loop, daemon=True, name="weather").start()
     threading.Thread(target=calendar_loop, daemon=True, name="calendar").start()
     link.start()
