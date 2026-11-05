@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel CYD</title>
+<style>
+  :root {
+    --bg: #0e1015; --card: #171a21; --line: #2a2f3a; --text: #e8eaee; --muted: #8b93a1;
+    --accent: #ff8c28; --good: #50c878; --warn: #f0be3c; --bad: #eb5046; --blue: #64a5ff;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; margin-right: auto; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  .wide { grid-column: 1 / -1; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+  .row label { color: var(--muted); min-width: 92px; }
+  .muted { color: var(--muted); }
+  .err { color: var(--bad); }
+  input, select, button { font: inherit; color: var(--text); background: #0f1117; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input[type=range] { padding: 0; flex: 1; accent-color: var(--accent); }
+  input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+  button { cursor: pointer; background: #222733; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #1a1006; font-weight: 600; }
+  a { color: var(--blue); }
+  ol { padding-left: 20px; margin: 8px 0; } ol li { margin: 6px 0; }
+  code { background: #0f1117; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .ev { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: 0; }
+  .ev .when { color: var(--blue); min-width: 96px; font-variant-numeric: tabular-nums; }
+  .ev.now .when { color: var(--accent); font-weight: 600; }
+  .ev .cal { width: 4px; border-radius: 2px; flex: none; }
+  .cals label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid2 > * { min-width: 0; }
+  .results button { display: block; width: 100%; text-align: left; margin: 4px 0; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222733; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+
+  /* Previa da tela: mesmo layout do firmware, 320x240 em escala 1.6 */
+  .screen-wrap { display: flex; justify-content: center; overflow-x: auto; }
+  .screen { width: 512px; height: 384px; background: #0c0e12; border: 10px solid #2b2b2b; border-radius: 6px; position: relative; font-family: "Consolas", monospace; color: #e8eaee; flex: none; }
+  .screen .hdr { height: 45px; display: flex; align-items: center; padding: 0 13px; border-bottom: 1px solid #2c323e; gap: 8px; }
+  .screen .hdr .clock { margin-left: auto; font-size: 30px; }
+  .screen .mid { display: grid; grid-template-columns: 1fr 1fr; height: 198px; }
+  .screen .col { padding: 6px 13px; position: relative; }
+  .screen .col + .col { border-left: 1px solid #2c323e; }
+  .screen .t { color: #828a98; font-size: 15px; }
+  .screen .spark { height: 54px; background: #222630; display: flex; align-items: flex-end; margin: 6px 0; }
+  .screen .spark i { flex: 1; background: #6e3e16; border-top: 2px solid var(--accent); }
+  .screen .bar { display: grid; grid-template-columns: 56px 1fr 46px; align-items: center; gap: 6px; font-size: 15px; margin: 5px 0; }
+  .screen .bar .trk { height: 10px; background: #222630; border-radius: 5px; overflow: hidden; }
+  .screen .bar .fill { height: 100%; border-radius: 5px; }
+  .screen .big { font-size: 40px; }
+  .screen .hours { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; font-size: 15px; margin-top: 8px; }
+  .screen .agenda { padding: 6px 13px; border-top: 1px solid #2c323e; font-size: 15px; }
+  .screen .agenda div { display: flex; gap: 10px; height: 25px; align-items: center; }
+  .screen .agenda .w { color: var(--blue); width: 140px; flex: none; }
+  .screen .agenda .now .w { color: var(--accent); }
+  .screen .agenda span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Painel CYD</h1>
+  <span class="pill"><span class="dot" id="p-board"></span><span id="p-board-t">Placa</span></span>
+  <span class="pill"><span class="dot" id="p-google"></span><span id="p-google-t">Google</span></span>
+  <span class="pill"><span class="dot" id="p-weather"></span><span id="p-weather-t">Tempo</span></span>
+</header>
+
+<main>
+  <section class="card wide">
+    <h2>Na tela agora</h2>
+    <div class="screen-wrap"><div class="screen" id="screen"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Placa</h2>
+    <div id="board-status" class="muted"></div>
+    <div class="row"><label>Porta</label><select id="port"></select><button id="pause"></button></div>
+    <div class="row"><label>Brilho</label><input type="range" id="brightness" min="10" max="255"><span id="br-v" class="muted"></span></div>
+    <div class="row"><label>Cores</label><label style="min-width:0"><input type="checkbox" id="invert"> inverter (se aparecer negativo)</label></div>
+    <div class="row"><label>Rotacao</label><label style="min-width:0"><input type="checkbox" id="rotation"> girar 180°</label></div>
+  </section>
+
+  <section class="card">
+    <h2>Tempo</h2>
+    <div id="weather-now"></div>
+    <div class="row"><label>Cidade</label><span id="city"></span></div>
+    <form class="row" id="city-form"><input id="city-q" placeholder="Buscar outra cidade" style="flex:1"><button>Buscar</button></form>
+    <div class="results" id="city-results"></div>
+  </section>
+
+  <section class="card">
+    <h2>Google Agenda</h2>
+    <div id="google"></div>
+  </section>
+
+  <section class="card">
+    <h2>Proximos compromissos</h2>
+    <div id="events"></div>
+    <form id="ev-form" style="margin-top:14px;display:none">
+      <h2 style="margin-top:8px">Novo evento</h2>
+      <div class="row"><input id="ev-title" placeholder="Titulo" style="flex:1" required></div>
+      <div class="grid2">
+        <input type="date" id="ev-date" required>
+        <input type="time" id="ev-time" title="Vazio = dia inteiro">
+        <select id="ev-min"><option value="30">30 min</option><option value="60" selected>1 hora</option><option value="90">1h30</option><option value="120">2 horas</option></select>
+        <select id="ev-cal"></select>
+      </div>
+      <div class="row"><button class="primary">Adicionar</button><span class="muted">Sem horario = dia inteiro</span></div>
+    </form>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null, calendars = null, settingsLoaded = false;
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2800);
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const ago = (ts) => {
+  if (!ts) return "nunca";
+  const s = Math.round(Date.now() / 1000 - ts);
+  return s < 60 ? `ha ${s}s` : `ha ${Math.round(s / 60)} min`;
+};
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pctColor = (p) => (p < 60 ? "var(--good)" : p < 85 ? "var(--warn)" : "var(--bad)");
+const ICON = { S: "☀", P: "⛅", C: "☁", F: "🌫", R: "🌧", T: "⛈", N: "❄" };
+const cpuHist = [];
+
+function setDot(id, cls, text) { $(id).className = "dot " + cls; $(id + "-t").textContent = text; }
+
+// ---------- previa da tela ----------
+function renderScreen(p) {
+  const s = p.sys, w = p.w, ev = p.ev;
+  if (s) { cpuHist.push(s.cpu); if (cpuHist.length > 72) cpuHist.shift(); }
+  const bar = (lbl, v, val) => `<div class="bar"><span class="t">${lbl}</span><span class="trk"><span class="fill" style="display:block;width:${v}%;background:${pctColor(v)}"></span></span><span>${val}</span></div>`;
+  const rate = (k) => (k >= 1024 ? (k / 1024).toFixed(1) + " MB/s" : Math.round(k) + " KB/s");
+  const stale = !S.link.last_ack || Date.now() / 1000 - S.link.last_ack > 5;
+  $("screen").innerHTML = `
+    <div class="hdr"><span class="dot ${stale ? "bad" : "good"}"></span><span>${stale ? "sem dados do PC" : esc(p.d)}</span><span class="clock">${esc(p.t)}</span></div>
+    <div class="mid">
+      <div class="col">
+        <div style="display:flex"><span class="t">SISTEMA</span><span style="margin-left:auto">${s ? "CPU " + Math.round(s.cpu) + "%" : ""}</span></div>
+        <div class="spark">${cpuHist.map((v) => `<i style="height:${Math.max(2, v)}%"></i>`).join("")}</div>
+        ${s ? bar("RAM", s.ram, Math.round(s.ram) + "%") + `<div class="t" style="font-size:11px;margin-left:62px">${s.ru} / ${Math.round(s.rt)} GB</div>` + bar("DISCO", s.dsk, Math.round(s.dsk) + "%")
+             + `<div style="font-size:12px;margin-top:4px"><span style="color:var(--good)">▼</span> ${rate(s.dn)} &nbsp; <span style="color:var(--blue)">▲</span> ${rate(s.up)}</div>` : ""}
+      </div>
+      <div class="col">
+        <div class="t">${esc(w.city)}</div>
+        ${w.ok ? `<div style="display:flex;align-items:center;gap:12px;margin-top:4px"><span style="font-size:44px">${ICON[w.ic] || ""}</span>
+          <div><div class="big">${w.tc}°C</div><div class="t">${w.mn}° / ${w.mx}°</div></div></div>
+          <div class="hours">${w.h.map((h) => `<div><div class="t">${h[0]}</div><div>${ICON[h[2]] || ""}</div><div>${h[1]}°</div></div>`).join("")}</div>`
+          : `<div class="t">sem previsao</div>`}
+      </div>
+    </div>
+    <div class="agenda"><span class="t">AGENDA</span>
+      ${ev.st === "ok" && ev.l.length ? ev.l.map((e) => `<div class="${e[2] ? "now" : ""}"><span class="w">${esc(e[0])}</span><span>${esc(e[1])}</span></div>`).join("")
+        : `<div class="t">${esc(ev.msg || "nada nos proximos dias")}</div>`}
+    </div>`;
+}
+
+// ---------- placa ----------
+async function loadPorts() {
+  const ps = await api("/api/ports");
+  const cur = S.config.port;
+  $("port").innerHTML = `<option value="auto">Automatico (achar a CYD)</option>` +
+    ps.map((p) => `<option value="${esc(p.device)}">${esc(p.device)} — ${esc(p.desc)}${p.cyd ? " ★" : ""}</option>`).join("");
+  $("port").value = ps.some((p) => p.device === cur) ? cur : "auto";
+}
+function renderBoard() {
+  const L = S.link, c = S.config;
+  const alive = L.last_ack && Date.now() / 1000 - L.last_ack < 5;
+  let txt;
+  if (c.paused) txt = "Porta liberada. Pode gravar firmware; clique em Retomar quando terminar.";
+  else if (alive) txt = `Conectada em ${L.port}. Ultima resposta ${ago(L.last_ack)} (${L.acks} de ${L.sent} mensagens confirmadas).`;
+  else if (L.state === "conectado") txt = `Porta ${L.port} aberta, mas a placa ainda nao respondeu. Ela esta com o firmware do painel?`;
+  else txt = L.error || L.state;
+  $("board-status").innerHTML = (alive || c.paused ? "" : '<span class="err">') + esc(txt);
+  $("pause").textContent = c.paused ? "Retomar" : "Liberar porta";
+  setDot("p-board", c.paused ? "warn" : alive ? "good" : "bad", c.paused ? "Placa: pausada" : alive ? `Placa: ${L.port}` : "Placa: sem resposta");
+  if (!settingsLoaded) {
+    $("brightness").value = c.brightness; $("br-v").textContent = c.brightness;
+    $("invert").checked = !!c.invert; $("rotation").checked = c.rotation === 3;
+  }
+}
+$("port").onchange = () => post("/api/config", { port: $("port").value }).then(() => toast("Porta alterada"));
+$("pause").onclick = async () => { await post("/api/config", { paused: !S.config.paused }); refresh(); };
+$("brightness").oninput = () => { $("br-v").textContent = $("brightness").value; };
+$("brightness").onchange = () => post("/api/config", { brightness: +$("brightness").value });
+$("invert").onchange = () => post("/api/config", { invert: $("invert").checked ? 1 : 0 });
+$("rotation").onchange = () => post("/api/config", { rotation: $("rotation").checked ? 3 : 1 });
+
+// ---------- tempo ----------
+function renderWeather() {
+  const w = S.weather, c = S.config.city;
+  $("city").textContent = `${c.name}${c.admin ? " — " + c.admin : ""}`;
+  if (w) {
+    $("weather-now").innerHTML = `<div style="font-size:28px">${ICON[w.ic] || ""} ${w.tc}°C <span class="muted" style="font-size:14px">${esc(w.desc)}, umidade ${w.hum ?? "?"}%</span></div>
+      <div class="muted">Hoje ${w.mn}° a ${w.mx}° · atualizado ${ago(S.weather_at)}</div>`;
+  } else $("weather-now").innerHTML = `<span class="${S.weather_err ? "err" : "muted"}">${esc(S.weather_err || "Buscando previsao...")}</span>`;
+  setDot("p-weather", w && !S.weather_err ? "good" : S.weather_err ? "bad" : "", w ? `Tempo: ${w.tc}°C` : "Tempo");
+}
+$("city-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $("city-q").value.trim(); if (!q) return;
+  try {
+    const rs = await api("/api/geocode?q=" + encodeURIComponent(q));
+    $("city-results").innerHTML = rs.length ? "" : '<span class="muted">Nada encontrado</span>';
+    rs.forEach((r) => {
+      const b = document.createElement("button");
+      b.textContent = `${r.name} — ${r.admin}, ${r.country}`;
+      b.onclick = async () => {
+        await post("/api/config", { city: { name: r.name, admin: r.admin, lat: r.lat, lon: r.lon } });
+        $("city-results").innerHTML = ""; $("city-q").value = ""; toast("Cidade alterada"); refresh();
+      };
+      $("city-results").appendChild(b);
+    });
+  } catch (err) { toast(err.message); }
+};
+
+// ---------- google ----------
+function renderGoogle() {
+  const g = S.google, box = $("google");
+  setDot("p-google", g.status === "ok" ? "good" : g.status === "err" ? "bad" : "", g.status === "ok" ? "Google: conectado" : g.status === "err" ? "Google: erro" : "Google: desligado");
+  $("ev-form").style.display = g.status === "ok" ? "" : "none";
+
+  if (!g.has_secret) {
+    if (box.dataset.mode === "setup") return;
+    box.dataset.mode = "setup";
+    box.innerHTML = `<p>Para ler a sua agenda, o painel precisa de uma credencial de app do Google (uma vez so, ~5 min):</p>
+      <ol>
+        <li>Abra o <a href="https://console.cloud.google.com/projectcreate" target="_blank">Google Cloud Console</a> e crie um projeto (ex.: <code>painel-cyd</code>).</li>
+        <li>Ative a <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank">Google Calendar API</a>.</li>
+        <li>Em <a href="https://console.cloud.google.com/auth/overview" target="_blank">Google Auth Platform</a>, configure a tela de consentimento: tipo <b>Externo</b>, e adicione o seu e-mail em <b>Publico-alvo → Usuarios de teste</b>.</li>
+        <li><b>Nao pule:</b> sem o seu e-mail em <b>Usuarios de teste</b>, o login para em "Erro 403: access_denied". Em modo "Testando" o login vence a cada 7 dias (o painel avisa e reconecta em um clique).</li>
+        <li>Em <a href="https://console.cloud.google.com/auth/clients" target="_blank">Clientes</a>, crie um <b>ID do cliente OAuth</b> do tipo <b>App para computador</b> e baixe o JSON.</li>
+        <li>Envie o arquivo aqui:</li>
+      </ol>
+      <div class="row"><input type="file" id="secret" accept=".json"><button class="primary" id="secret-up">Enviar</button></div>`;
+    $("secret-up").onclick = async () => {
+      const f = $("secret").files[0]; if (!f) return toast("Escolha o arquivo JSON");
+      const fd = new FormData(); fd.append("file", f);
+      try { await api("/api/google/secret", { method: "POST", body: fd }); toast("Credencial salva"); box.dataset.mode = ""; refresh(); }
+      catch (e) { toast(e.message); }
+    };
+    return;
+  }
+  if (!g.connected) {
+    if (box.dataset.mode === "connect") return;
+    box.dataset.mode = "connect";
+    box.innerHTML = `<p>Credencial pronta. Agora entre com a sua conta Google:</p>
+      <div class="row"><a href="/auth/google"><button class="primary">Conectar Google Agenda</button></a></div>
+      <p class="muted">O Google vai avisar que o app "nao foi verificado": e o seu proprio app. Clique em <b>Continuar</b> e marque as permissoes da agenda.</p>`;
+    return;
+  }
+  const mode = "connected:" + g.status + ":" + (g.account || "");
+  if (box.dataset.mode !== mode) {
+    box.dataset.mode = mode;
+    box.innerHTML = `${g.status === "err" ? `<p class="err">${esc(g.error)}</p><div class="row"><a href="/auth/google"><button class="primary">Reconectar</button></a></div>` : ""}
+      ${g.account ? `<p>Conectado como <b>${esc(g.account)}</b></p>` : ""}
+      <h2 style="margin-top:16px">Agendas exibidas na tela</h2><div class="cals" id="cals"><span class="muted">Carregando...</span></div>
+      <div class="row"><button id="g-refresh">Atualizar agora</button><button id="g-off">Desconectar</button></div>`;
+    $("g-off").onclick = async () => { if (!confirm("Desconectar a conta Google?")) return; await post("/api/google/disconnect", {}); calendars = null; box.dataset.mode = ""; refresh(); };
+    $("g-refresh").onclick = async () => { await post("/api/refresh", {}); toast("Atualizando..."); setTimeout(refresh, 1500); };
+    if (g.status === "ok") loadCalendars();
+  }
+}
+async function loadCalendars() {
+  try { calendars = await api("/api/calendars"); } catch (e) { $("cals").innerHTML = `<span class="err">${esc(e.message)}</span>`; return; }
+  const sel = new Set(S.config.calendars.map((id) => (id === "primary" ? calendars.find((c) => c.primary)?.id : id)));
+  $("cals").innerHTML = calendars.map((c) => `<label><input type="checkbox" value="${esc(c.id)}" ${sel.has(c.id) ? "checked" : ""}><span class="swatch" style="background:${esc(c.color)}"></span>${esc(c.name)}</label>`).join("");
+  $("cals").querySelectorAll("input").forEach((i) => (i.onchange = async () => {
+    const ids = [...$("cals").querySelectorAll("input:checked")].map((x) => x.value);
+    await post("/api/config", { calendars: ids }); toast("Agendas atualizadas"); setTimeout(refresh, 1500);
+  }));
+  const w = calendars.filter((c) => c.writable);
+  $("ev-cal").innerHTML = w.map((c) => `<option value="${esc(c.id)}" ${c.primary ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+}
+
+// ---------- eventos ----------
+function renderEvents() {
+  const g = S.google;
+  if (g.status !== "ok") { $("events").innerHTML = `<span class="muted">Conecte o Google Agenda para ver os compromissos.</span>`; return; }
+  if (!S.events.length) { $("events").innerHTML = `<span class="muted">Nada nos proximos ${S.config.days_ahead} dias.</span>`; return; }
+  const color = (id) => calendars?.find((c) => c.id === id)?.color || "var(--line)";
+  $("events").innerHTML = S.events.slice(0, 12).map((e) => `<div class="ev ${e.now ? "now" : ""}"><span class="cal" style="background:${esc(color(e.cal))}"></span>
+    <span class="when">${esc(e.label)}</span><a href="${esc(e.link)}" target="_blank" style="color:inherit;text-decoration:none">${esc(e.title)}</a></div>`).join("")
+    + `<p class="muted" style="margin:8px 0 0">A tela mostra os 4 primeiros · atualizado ${ago(g.updated_at)}</p>`;
+}
+$("ev-form").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await post("/api/events", { title: $("ev-title").value, date: $("ev-date").value, time: $("ev-time").value, minutes: +$("ev-min").value, calendar: $("ev-cal").value });
+    $("ev-title").value = ""; toast("Evento criado"); setTimeout(refresh, 1500);
+  } catch (err) { toast(err.message); }
+};
+$("ev-date").valueAsDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+
+// ---------- loop ----------
+async function refresh() {
+  try { S = await api("/api/state"); } catch { setDot("p-board", "bad", "Programa do PC parado"); return; }
+  if (!$("port").options.length) await loadPorts();
+  renderScreen(S.payload); renderBoard(); renderWeather(); renderGoogle(); renderEvents();
+  settingsLoaded = true;
+}
+const qs = new URLSearchParams(location.search).get("google");
+if (qs) { toast(qs === "ok" ? "Google conectado!" : "Falha ao conectar o Google: " + qs); history.replaceState(null, "", "/"); }
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

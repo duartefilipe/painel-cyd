@@ -1,0 +1,4 @@
+# credencial do Google, token, config e log: nada disso vai para o git
+data/
+firmware/.pio/
+__pycache__/
