@@ -1,0 +1,3 @@
+# Script de shell com CRLF quebra no Linux ("/usr/bin/env: 'bash\r'").
+*.sh  text eol=lf
+*.bat text eol=crlf

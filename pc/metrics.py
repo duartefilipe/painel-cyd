@@ -10,7 +10,8 @@ class Metrics:
         psutil.cpu_percent(interval=None)  # a primeira leitura sempre volta 0
         self._net = psutil.net_io_counters()
         self._t = time.monotonic()
-        self._disk = os.environ.get("SystemDrive", "C:") + "\\"
+        # Disco do sistema: C:\ no Windows, raiz no Linux.
+        self._disk = os.environ.get("SystemDrive", "C:") + "\\" if os.name == "nt" else "/"
 
     def read(self) -> dict:
         now = time.monotonic()

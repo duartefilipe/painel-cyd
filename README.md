@@ -44,6 +44,10 @@ python app.py
 O navegador abre no painel. No Windows, depois da primeira vez, basta dar duplo clique em
 `iniciar.bat`, que sobe o programa sem janela de terminal.
 
+**No Linux**, o caminho é outro: `bash instalar-linux.sh` cria o ambiente, confere a
+permissão da porta serial e liga um serviço do systemd que sobe a cada login. Detalhes e
+armadilhas (grupo `dialout`, `brltty` no Ubuntu) em [docs/linux.md](docs/linux.md).
+
 Para os compromissos aparecerem, conecte o Google Agenda:
 [docs/google-agenda.md](docs/google-agenda.md).
 
@@ -59,8 +63,9 @@ A placa não busca nada sozinha. Ligada sem o programa do PC, ela mostra
 **"aguardando o PC..."**. O painel web é só a tela de configuração desse programa: não
 precisa ficar aberto no navegador para a placa funcionar.
 
-Por isso, o normal é o programa **iniciar com o Windows**, em segundo plano
-([como configurar](docs/instalacao.md#iniciar-junto-com-o-windows)). Para abrir o painel
+Por isso, o normal é o programa **iniciar com o sistema**, em segundo plano: atalho na
+inicialização no Windows ([como configurar](docs/instalacao.md#iniciar-junto-com-o-windows)),
+serviço do systemd no Linux ([docs/linux.md](docs/linux.md)). Para abrir o painel
 depois, dê duplo clique em `iniciar.bat`: se o programa já estiver rodando, ele só abre
 o navegador.
 
@@ -72,6 +77,7 @@ cada mensagem. Até o programa subir, a placa usa o padrão.
 | Documento | Conteúdo |
 |---|---|
 | [docs/instalacao.md](docs/instalacao.md) | Hardware, gravação do firmware, programa do PC, iniciar com o Windows |
+| [docs/linux.md](docs/linux.md) | Instalar no Linux, porta serial, serviço do systemd, levar o login do Google |
 | [docs/google-agenda.md](docs/google-agenda.md) | Criar a credencial no Google Cloud e conectar a conta |
 | [docs/arquitetura.md](docs/arquitetura.md) | Como as peças conversam, o protocolo da serial e como acrescentar um dado novo |
 | [docs/problemas.md](docs/problemas.md) | Sintoma → causa → solução |
@@ -93,6 +99,8 @@ pc/                  programa do PC (Python)
 data/                criada na primeira execução; fica FORA do git
                      (credencial do Google, token, configuração e log)
 iniciar.bat          sobe o painel sem janela (Windows)
+iniciar.sh           o mesmo no Linux
+instalar-linux.sh    .venv, checagem da porta serial e serviço do systemd
 ```
 
 ## Privacidade

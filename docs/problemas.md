@@ -7,6 +7,9 @@
 | Painel diz **"porta aberta, mas a placa não respondeu"** | a placa está com outro firmware | grave o firmware (`pio run -t upload`) |
 | Painel diz **"Nenhuma CYD encontrada no USB"** | cabo só de carga, driver ausente, ou conversor não reconhecido | troque o cabo; instale o driver CH340; escolha a porta manualmente |
 | `pio run -t upload` falha com **"could not open port"** / **"Access denied"** | o programa do PC está segurando a porta | **Liberar porta** no painel, gravar, **Retomar** |
+| Linux: **`Permission denied: '/dev/ttyUSB0'`** | usuário fora do grupo `dialout` (`uucp` no Arch) | `sudo usermod -aG dialout $USER`, sair e entrar na sessão ([linux.md](linux.md#permissão-na-porta-serial)) |
+| Linux: a placa conecta e **a `/dev/ttyUSB0` some** | `brltty` sequestrou o CH340 (Ubuntu 22.04+) | `sudo apt remove brltty` e reconectar ([linux.md](linux.md#brltty-sequestra-a-placa-ubuntu-2204)) |
+| Linux: `instalar-linux.sh` diz **`bash\r`: No such file** | script salvo com fim de linha do Windows | `sed -i 's/\r$//' *.sh` (o `.gitattributes` evita isso num clone novo) |
 | Cores em **negativo** (fundo claro) | lote da CYD com painel invertido | marque **inverter** no card Placa |
 | Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` (ver [instalacao.md](instalacao.md#hardware)) |
 | Google: **"Erro 403: access_denied"** no login | app em "Testando" e o seu e-mail não está em Usuários de teste | adicione o e-mail ([google-agenda.md](google-agenda.md#2-tela-de-consentimento)) |

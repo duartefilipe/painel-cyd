@@ -2,3 +2,4 @@
 data/
 firmware/.pio/
 __pycache__/
+.venv/
