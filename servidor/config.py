@@ -37,7 +37,13 @@ DEFAULTS = {
     "screens": [
         {"id": "trabalho", "name": "Trabalho", "kind": "grid", "left": "sys", "right": "w", "bottom": "ev"},
         {"id": "anakin", "name": "Anakin", "kind": "grid", "left": "fx", "right": "w", "bottom": "ev"},
-        {"id": "relogio", "name": "Relogio", "kind": "clock", "scene": "aquarium", "seconds": True},
+        {"id": "relogio", "name": "Relogio", "kind": "clock", "scene": "aquarium", "seconds": True, "color": "#ffd23c"},
+        {"id": "pixel", "name": "Pixel", "kind": "pixel", "trans": "slide", "apps": [
+            {"type": "clock", "icon": "auto", "color": "#ffffff", "dur": 10},
+            {"type": "weather", "icon": "auto", "color": "#ffd23c", "dur": 5},
+            {"type": "date", "icon": "auto", "color": "#64a5ff", "dur": 4},
+            {"type": "event", "icon": "auto", "color": "#ff8c28", "dur": 8},
+        ]},
     ],
     # auto: PC conectado -> pc_on, desconectado -> pc_off.  manual: sempre "manual".
     "display": {"mode": "auto", "manual": "trabalho", "pc_on": "trabalho", "pc_off": "anakin"},

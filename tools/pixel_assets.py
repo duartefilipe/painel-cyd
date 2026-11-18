@@ -1,0 +1,180 @@
+"""Fonte pixelada 3x5 e icones 8x8: fonte UNICA para firmware e painel web.
+
+Rode depois de mudar algo aqui:
+    python tools/pixel_assets.py
+Gera:
+    firmware/src/pixel_assets.h   (tabelas em C para a placa)
+    servidor/pixel_assets.json    (o servidor valida icones/caracteres e o painel desenha a previa)
+"""
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# ---------------------------------------------------------------- fonte 3x5
+# '#' aceso, '.' apagado. Pontuacao e cortada nas colunas vazias (fica mais estreita);
+# digitos e letras mantem 3 colunas para a hora nao "pular".
+GLYPHS = {
+    "0": ["###", "#.#", "#.#", "#.#", "###"],
+    "1": [".#.", "##.", ".#.", ".#.", "###"],
+    "2": ["###", "..#", "###", "#..", "###"],
+    "3": ["###", "..#", ".##", "..#", "###"],
+    "4": ["#.#", "#.#", "###", "..#", "..#"],
+    "5": ["###", "#..", "###", "..#", "###"],
+    "6": ["###", "#..", "###", "#.#", "###"],
+    "7": ["###", "..#", ".#.", ".#.", ".#."],
+    "8": ["###", "#.#", "###", "#.#", "###"],
+    "9": ["###", "#.#", "###", "..#", "###"],
+    "A": [".#.", "#.#", "###", "#.#", "#.#"],
+    "B": ["##.", "#.#", "##.", "#.#", "##."],
+    "C": [".##", "#..", "#..", "#..", ".##"],
+    "D": ["##.", "#.#", "#.#", "#.#", "##."],
+    "E": ["###", "#..", "##.", "#..", "###"],
+    "F": ["###", "#..", "##.", "#..", "#.."],
+    "G": [".##", "#..", "#.#", "#.#", ".##"],
+    "H": ["#.#", "#.#", "###", "#.#", "#.#"],
+    "I": ["###", ".#.", ".#.", ".#.", "###"],
+    "J": ["..#", "..#", "..#", "#.#", ".#."],
+    "K": ["#.#", "#.#", "##.", "#.#", "#.#"],
+    "L": ["#..", "#..", "#..", "#..", "###"],
+    "M": ["#.#", "###", "###", "#.#", "#.#"],
+    "N": ["##.", "#.#", "#.#", "#.#", "#.#"],
+    "O": [".#.", "#.#", "#.#", "#.#", ".#."],
+    "P": ["##.", "#.#", "##.", "#..", "#.."],
+    "Q": [".#.", "#.#", "#.#", "##.", ".##"],
+    "R": ["##.", "#.#", "##.", "#.#", "#.#"],
+    "S": [".##", "#..", ".#.", "..#", "##."],
+    "T": ["###", ".#.", ".#.", ".#.", ".#."],
+    "U": ["#.#", "#.#", "#.#", "#.#", "###"],
+    "V": ["#.#", "#.#", "#.#", "#.#", ".#."],
+    "W": ["#.#", "#.#", "###", "###", "#.#"],
+    "X": ["#.#", "#.#", ".#.", "#.#", "#.#"],
+    "Y": ["#.#", "#.#", ".#.", ".#.", ".#."],
+    "Z": ["###", "..#", ".#.", "#..", "###"],
+    " ": ["...", "...", "...", "...", "..."],
+    ":": ["...", ".#.", "...", ".#.", "..."],
+    ".": ["...", "...", "...", "...", ".#."],
+    ",": ["...", "...", "...", ".#.", "#.."],
+    "%": ["#.#", "..#", ".#.", "#..", "#.#"],
+    "-": ["...", "...", "###", "...", "..."],
+    "+": ["...", ".#.", "###", ".#.", "..."],
+    "/": ["..#", "..#", ".#.", "#..", "#.."],
+    "!": [".#.", ".#.", ".#.", "...", ".#."],
+    "?": ["##.", "..#", ".#.", "...", ".#."],
+    "$": [".##", "##.", ".#.", ".##", "##."],
+    "~": ["##.", "##.", "...", "...", "..."],   # simbolo de grau (o servidor troca ° por ~)
+    "'": [".#.", ".#.", "...", "...", "..."],
+    "=": ["...", "###", "...", "###", "..."],
+    "<": ["..#", ".#.", "#..", ".#.", "..#"],
+    ">": ["#..", ".#.", "..#", ".#.", "#.."],
+    "(": [".#.", "#..", "#..", "#..", ".#."],
+    ")": [".#.", "..#", "..#", "..#", ".#."],
+    "#": ["#.#", "###", "#.#", "###", "#.#"],
+    "*": ["...", "#.#", ".#.", "#.#", "..."],
+}
+TRIM = set(" :.,!'~()-")  # estes ficam mais estreitos
+SPACE_W = 2
+
+# ---------------------------------------------------------------- icones 8x8
+PALETTE = {
+    ".": None,
+    "W": (255, 255, 255), "Y": (255, 210, 0), "O": (255, 140, 0), "R": (230, 40, 40),
+    "G": (40, 200, 80), "B": (40, 120, 255), "C": (80, 200, 255), "K": (130, 130, 140),
+    "D": (70, 70, 80), "P": (255, 100, 160), "N": (140, 80, 30), "L": (150, 200, 255),
+}
+ICONS = {
+    "clock": ["..CCCC..", ".C..W.C.", "C...W..C", "C...W..C", "C...WWWC", "C......C", ".C....C.", "..CCCC.."],
+    "sun": ["...Y....", ".Y.Y.Y..", "..YYY...", "YYYYYYY.", "..YYY...", ".Y.Y.Y..", "...Y....", "........"],
+    "moon": ["...LLL..", "..LL....", ".LL.....", ".LL.....", ".LL.....", ".LL.....", "..LL....", "...LLL.."],
+    "cloud": ["........", "........", "...WW...", ".WWWWW..", "WWWWWWWW", "WWWWWWWW", ".WWWWWW.", "........"],
+    "partly": ["Y.Y.....", ".YYY....", "YYY.WW..", ".YWWWWW.", "YWWWWWWW", "WWWWWWWW", ".WWWWWW.", "........"],
+    "rain": ["...KK...", ".KKKKK..", "KKKKKKKK", ".KKKKKK.", "........", ".B..B..B", "B..B..B.", "........"],
+    "storm": ["...KK...", ".KKKKK..", "KKKKKKKK", ".KKKKKK.", "...YY...", "..YY....", "...YY...", "..Y....."],
+    "snow": ["...KK...", ".KKKKK..", "KKKKKKKK", ".KKKKKK.", "........", ".W..W..W", "........", "W..W..W."],
+    "fog": ["........", "KKKKKK..", "........", "..KKKKKK", "........", "KKKKKK..", "........", "..KKKKKK"],
+    "calendar": [".W....W.", "RRRRRRRR", "RRRRRRRR", "WWWWWWWW", "WDWDWDWW", "WWWWWWWW", "WDWDWWWW", "WWWWWWWW"],
+    "dollar": ["...G....", "..GGGG..", ".G.G....", "..GGG...", "...G.G..", ".GGGG...", "...G....", "........"],
+    "euro": ["...BBBB.", "..B.....", ".BBBB...", "..B.....", ".BBBB...", "..B.....", "...BBBB.", "........"],
+    "bitcoin": ["..OOOO..", ".OWWWOO.", "OOWOOWOO", "OOWWWOOO", "OOWOOWOO", "OOWWWOOO", ".OOOOOO.", "..OOOO.."],
+    "heart": ["........", ".RR..RR.", "RRRRRRRR", "RRRRRRRR", ".RRRRRR.", "..RRRR..", "...RR...", "........"],
+    "cpu": ["..K.K...", ".DDDDDD.", "KDGGGGDK", ".DG..GD.", "KDG..GDK", ".DGGGGD.", ".DDDDDD.", "..K.K..."],
+    "skull": ["..WWWW..", ".WWWWWW.", "WWWWWWWW", "W..WW..W", "WWWWWWWW", ".WW..WW.", "..WWWW..", "..W.W.W."],
+    "star": ["...Y....", "...Y....", "YYYYYYY.", ".YYYYY..", "..YYY...", ".YY.YY..", "YY...YY.", "........"],
+    "home": ["...RR...", "..RRRR..", ".RRRRRR.", "RRRRRRRR", ".WWWWWW.", ".WWNNWW.", ".WWNNWW.", ".WWNNWW."],
+    "music": ["..BBBBBB", "..B....B", "..B....B", "..B....B", "BBB..BBB", "BBB..BBB", "........", "........"],
+    "coffee": ["..W.W...", ".W.W....", "........", "NNNNNNN.", "NNNNNN.N", "NNNNNNN.", ".NNNN...", "........"],
+}
+
+
+def rgb565(c):
+    r, g, b = c
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
+
+def glyph(ch, rows):
+    assert len(rows) == 5 and all(len(r) == 3 for r in rows), ch
+    cols = [c for c in range(3) if any(r[c] == "#" for r in rows)]
+    if ch in TRIM and cols:
+        c0, c1 = cols[0], cols[-1]
+    else:
+        c0, c1 = 0, 2
+    w = SPACE_W if ch == " " else c1 - c0 + 1
+    bits = 0
+    for y, r in enumerate(rows):
+        for x in range(c0, c1 + 1):
+            if r[x] == "#":
+                bits |= 1 << (y * 3 + (x - c0))
+    return bits, w
+
+
+def icon(name, rows):
+    assert len(rows) == 8 and all(len(r) == 8 for r in rows), name
+    out = []
+    for r in rows:
+        for ch in r:
+            col = PALETTE[ch]
+            out.append(0 if col is None else (rgb565(col) or 1))  # 0 = apagado
+    return out
+
+
+def main():
+    font = {ch: glyph(ch, rows) for ch, rows in GLYPHS.items()}
+    icons = {n: icon(n, rows) for n, rows in ICONS.items()}
+
+    # ---- C ----
+    h = [
+        "// GERADO por tools/pixel_assets.py: nao edite a mao.",
+        "#pragma once",
+        "#include <stdint.h>",
+        "",
+        "struct PxGlyph { char ch; uint16_t bits; uint8_t w; };  // bit (y*3+x), 5 linhas",
+        f"static const PxGlyph PX_FONT[] = {{",
+    ]
+    for ch, (bits, w) in font.items():
+        lit = "'\\''" if ch == "'" else f"'{ch}'"
+        h.append(f"  {{{lit}, 0x{bits:04x}, {w}}},")
+    h += ["};", f"static const int PX_FONT_N = {len(font)};", ""]
+    h.append("struct PxIcon { const char* name; uint16_t px[64]; };  // 0 = apagado")
+    h.append("static const PxIcon PX_ICONS[] = {")
+    for n, px in icons.items():
+        h.append(f'  {{"{n}", {{{", ".join(str(v) for v in px)}}}}},')
+    h += ["};", f"static const int PX_ICONS_N = {len(icons)};", ""]
+    (ROOT / "firmware" / "src" / "pixel_assets.h").write_text("\n".join(h), encoding="utf-8")
+
+    # ---- JSON (servidor + painel) ----
+    def css(v):
+        if not v:
+            return None
+        r, g, b = (v >> 11) << 3, ((v >> 5) & 63) << 2, (v & 31) << 3
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    data = {
+        "font": {ch: [bits, w] for ch, (bits, w) in font.items()},
+        "icons": {n: [css(v) for v in px] for n, px in icons.items()},
+    }
+    (ROOT / "servidor" / "pixel_assets.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+    print(f"{len(font)} glifos, {len(icons)} icones")
+
+
+if __name__ == "__main__":
+    main()

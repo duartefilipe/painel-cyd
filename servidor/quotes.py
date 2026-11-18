@@ -8,8 +8,8 @@ KNOWN = {
 }
 
 
-def fetch(pairs: list[str]) -> list[dict]:
-    pairs = [p for p in pairs if p in KNOWN][:4]
+def fetch(pairs: list[str], limit: int = 4) -> list[dict]:
+    pairs = [p for p in pairs if p in KNOWN][:limit]
     if not pairs:
         return []
     r = requests.get(

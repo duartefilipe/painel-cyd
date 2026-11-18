@@ -37,17 +37,21 @@ Cada tela define o widget de cada região:
 | `left`, `right` | 160×124 | `sys` (Sistema), `w` (Tempo), `fx` (Cotações), `none` |
 | `bottom` | 320×88 | `ev` (Agenda), `none` |
 
-Além do tipo `grid` (as três regiões acima), uma tela pode ser `kind: "clock"`, um
-**relógio de mesa** em tela cheia:
+Além do tipo `grid` (as três regiões acima), uma tela pode ser:
 
-- metade de cima: hora grande (com segundos opcionais), data, tempo e próximo compromisso;
-- metade de baixo: animação em pixel art (`scene`): `aquarium`, `stars` (céu com
-  cidade), `matrix`, `fire` ou `none`.
+- `kind: "clock"` — **relógio de mesa**: animação em pixel art em tela cheia (`scene`:
+  `aquarium`, `stars`, `matrix`, `fire` ou `none`) e, por cima, hora pixelada (com cor e
+  segundos opcionais), data, tempo e próximo compromisso.
+- `kind: "pixel"` — **relógio pixel (matriz 32×8)**: faixa de LEDs simulada (32×8 em
+  blocos de 10×10 px) onde uma lista de até 8 `apps` (`clock`, `date`, `weather`,
+  `quote`, `event`, `cpu`, `text`) se alterna com transição vertical (`slide` ou `none`).
+  A fonte 3×5 e os ícones 8×8 vêm de `tools/pixel_assets.py`, que gera tanto
+  `firmware/src/pixel_assets.h` quanto `servidor/pixel_assets.json` (usado pela prévia).
 
-A animação roda na placa (~30 quadros/s), num sprite de 8 bits (38 KB) que só existe
-enquanto o relógio está na tela. O relógio anda sozinho a partir do campo `ep` (segundos
-locais desde 1970). Por isso, nesse modo a placa pede dados só a cada 4 s: cada pedido
-HTTP congela a animação por alguns milissegundos.
+A animação roda na placa (~30 quadros/s), num sprite de 8 bits (76 KB no relógio, 25 KB
+no pixel) que só existe nos modos animados. O relógio anda sozinho a partir do campo `ep`
+(segundos locais desde 1970). Por isso, nesses modos a placa pede dados só a cada 4 s:
+cada pedido HTTP congela a animação por alguns milissegundos.
 
 `display.mode`:
 

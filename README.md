@@ -17,9 +17,14 @@ como exibir:
 - **Automático:** PC conectado → tela X (ex.: "Trabalho"); PC desconectado → tela Y (ex.: "Anakin")
 - **Manual:** sempre a tela escolhida
 
-Uma tela também pode ser um **relógio de mesa**: hora grande, data, tempo, próximo
-compromisso e, embaixo, uma animação em pixel art (aquário, céu estrelado, chuva Matrix
-ou fogo).
+Além da tela em regiões, uma tela pode ser:
+
+- **Relógio de mesa:** animação em pixel art ocupando a tela inteira (aquário, céu
+  estrelado, chuva Matrix ou fogo) com hora pixelada, data, tempo e próximo compromisso
+  por cima.
+- **Relógio pixel (matriz 32×8):** simula um painel de LEDs 32×8 (estilo Ulanzi/AWTRIX)
+  com uma sequência de "apps" (hora, data, tempo, cotação, agenda, CPU, texto) que se
+  alternam deslizando.
 
 Depois da primeira gravação pelo USB, o firmware pode ser atualizado **pelo Wi-Fi**
 ([OTA](docs/instalacao.md#atualizar-o-firmware-pelo-wi-fi-ota)).

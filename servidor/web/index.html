@@ -89,12 +89,9 @@
   .screen .agenda span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* Relogio de mesa (tipo "clock"): metade de cima relogio, metade de baixo animacao */
-  .screen .clk { height: calc(120px * var(--k)); position: relative; text-align: center; padding-top: calc(6px * var(--k)); }
-  .screen .clk .hh { font-size: calc(62px * var(--k)); line-height: 1; letter-spacing: 2px; }
-  .screen .clk .ss { font-size: .32em; color: var(--accent); margin-left: 4px; vertical-align: top; }
-  .screen .clk .info { display: flex; justify-content: space-between; padding: 0 calc(10px * var(--k)); margin-top: calc(4px * var(--k)); color: #828a98; }
-  .screen .clk .nx { justify-content: flex-start; gap: 8px; color: #e8eaee; white-space: nowrap; overflow: hidden; }
-  .screen .scene { height: calc(120px * var(--k)); position: relative; overflow: hidden; border-top: 1px solid #2c323e; }
+  .screen { position: relative; }
+  .screen canvas.ov, .screen canvas.px { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+  .screen .scene { height: calc(240px * var(--k)); position: relative; overflow: hidden; }
   .sc-aquarium { background: linear-gradient(#0b3a5c, #062338); }
   .sc-aquarium u { position: absolute; left: 0; right: 0; bottom: 0; height: 14%; background: #c2a46b; }
   .sc-aquarium i { position: absolute; font-style: normal; font-size: 1.6em; animation: swim 9s linear infinite; }
@@ -114,6 +111,12 @@
   .sc-none { background: #0c0e12; }
   .scr .opts { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; font-size: 12px; }
   .scr .opts select { padding: 5px 6px; }
+  .scr .opts input[type=color], .app input[type=color] { width: 34px; height: 28px; padding: 2px; }
+  .apps { display: grid; gap: 6px; margin-bottom: 10px; }
+  .app { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+  .app select, .app input { padding: 4px 6px; font-size: 12px; }
+  .app .mv { margin-left: auto; display: flex; }
+  .app .mv button { padding: 2px 7px; }
   @media (max-width: 640px) {
     main { padding: 12px; }
     .screen { --k: 1; }
@@ -209,7 +212,9 @@ let draft = null, dirty = false;   // copia editavel das telas
 
 const WIDGETS_HALF = { sys: "Sistema do PC", w: "Tempo", fx: "Cotacoes", none: "(vazio)" };
 const WIDGETS_BOTTOM = { ev: "Agenda", none: "(vazio)" };
-const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa" };
+const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa", pixel: "Relogio pixel (LEDs)" };
+const APP_TYPES = { clock: "Hora", date: "Data", weather: "Tempo", quote: "Cotacao", event: "Prox. compromisso", cpu: "CPU do PC", text: "Texto livre" };
+const TRANS = { slide: "Deslizar", none: "Corte seco" };
 const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", none: "Sem animacao" };
 
 function toast(msg) {
@@ -264,22 +269,167 @@ function widget(kind, p) {
   }
   return "";
 }
+// ================= pixel: mesma fonte 3x5, icones e regras do firmware =================
+let PX = null;  // {font:{ch:[bits,w]}, icons:{nome:[64 cores|null]}}
+const c565 = (v) => { const r = (v >> 11) << 3, g = ((v >> 5) & 63) << 2, b = (v & 31) << 3; return `rgb(${r},${g},${b})`; };
+function pxWidth(t) {
+  let w = 0;
+  for (const ch of t) w += (PX.font[ch] || PX.font[" "])[1] + 1;
+  return Math.max(0, w - 1);
+}
+// Desenha texto chamando dot(x, y) para cada pixel aceso (em unidades da fonte).
+function pxEach(t, dot) {
+  let x = 0;
+  for (const ch of t) {
+    const [bits, w] = PX.font[ch] || PX.font[" "];
+    for (let y = 0; y < 5; y++) for (let gx = 0; gx < w; gx++) if ((bits >> (y * 3 + gx)) & 1) dot(x + gx, y);
+    x += w + 1;
+  }
+}
+// Texto em blocos grandes num canvas 320x240 (relogio de mesa), com sombra escura.
+function pxBig(ctx, t, x0, y0, k, color, clip = [0, 320]) {
+  const gap = k >= 6 ? 2 : 0, r = k >= 8 ? 2 : 0;
+  for (const pass of [0, 1]) {
+    ctx.fillStyle = pass ? color : "rgba(0,0,0,.85)";
+    pxEach(t, (x, y) => {
+      const X = x0 + x * k + (pass ? 0 : 2), Y = y0 + y * k + (pass ? 0 : 2);
+      if (X + k < clip[0] || X > clip[1]) return;
+      ctx.beginPath(); ctx.roundRect(X, Y, k - gap, k - gap, r); ctx.fill();
+    });
+  }
+}
+function pxIconBig(ctx, name, x0, y0, k) {
+  const ic = PX.icons[name]; if (!ic) return;
+  ic.forEach((c, i) => { if (c) { ctx.fillStyle = c; ctx.fillRect(x0 + (i % 8) * k, y0 + ((i / 8) | 0) * k, k, k); } });
+}
+
+const anims = new Map();  // canvas -> estado da animacao (relogio ou pixel)
+function animCanvas(el, cls) {
+  let cv = el.querySelector("canvas." + cls);
+  if (!cv) { cv = document.createElement("canvas"); cv.width = 320; cv.height = 240; cv.className = cls; el.appendChild(cv); }
+  return cv;
+}
+
+// ---- relogio de mesa: animacao (CSS) em tela cheia + informacoes pixeladas por cima ----
 function renderClock(el, p, live) {
   const stale = live && !(S.device.at && S.now - S.device.at < 5);
-  const w = p.w || { ok: 0 }, ev = p.ev || { l: [] };
-  const sec = p.lay.sec ? `<span class="ss">${String(new Date().getSeconds()).padStart(2, "0")}</span>` : "";
-  const next = ev.l && ev.l.length ? `<span style="color:var(--blue)">${esc(ev.l[0][0])}</span> ${esc(ev.l[0][1])}` : esc(ev.msg || "sem compromissos");
-  const top = `${stale ? '<span class="dot bad" style="position:absolute;top:8px;left:8px"></span>' : ""}
-      <div class="hh">${esc(p.t)}${sec}</div>
-      <div class="info"><span>${esc(p.d)}</span><span>${w.ok ? `${ICON[w.ic] || ""} ${w.tc}°C` : ""}</span></div>
-      <div class="info nx">${next}</div>`;
-  // Mesma animacao ja na tela: troca so a parte de cima, para a animacao nao reiniciar.
   const scene = el.querySelector(".scene");
-  if (scene && scene.dataset.sc === p.lay.sc && el.querySelector(".clk")) {
-    el.querySelector(".clk").innerHTML = top;
-    return;
+  if (!(scene && scene.dataset.sc === p.lay.sc)) {  // mesma animacao: nao reinicia
+    el.innerHTML = `<div class="scene full sc-${esc(p.lay.sc)}" data-sc="${esc(p.lay.sc)}">${sceneHtml(p.lay.sc)}</div>`;
   }
-  el.innerHTML = `<div class="clk">${top}</div><div class="scene sc-${esc(p.lay.sc)}" data-sc="${esc(p.lay.sc)}">${sceneHtml(p.lay.sc)}</div>`;
+  const cv = animCanvas(el, "ov");
+  const a = anims.get(cv) || { kind: "clock", fr: 0 };
+  Object.assign(a, { p, stale });
+  anims.set(cv, a);
+}
+function drawClock(cv, a) {
+  const ctx = cv.getContext("2d"), p = a.p, d = new Date();
+  ctx.clearRect(0, 0, 320, 240);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const K = 12, KS = 5, wHM = pxWidth(hm) * K, wS = p.lay.sec ? pxWidth(ss) * KS + 8 : 0;
+  const x = Math.round((320 - wHM - wS) / 2);
+  pxBig(ctx, hm, x, 14, K, a.stale ? "#828a98" : c565(p.lay.col || 0xFE87));
+  if (p.lay.sec) pxBig(ctx, ss, x + wHM + 8, 14, KS, "#ff8c28");
+  const info = (p.d || "").toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
+  pxBig(ctx, info, 12, 88, 3, "#c8ccd4");
+  const w = p.w || {};
+  if (w.ok) {
+    const t = `${w.tc}~C`, tw = pxWidth(t) * 3;
+    pxBig(ctx, t, 308 - tw, 88, 3, "#ffffff");
+    pxIconBig(ctx, { S: w.day ? "sun" : "moon", P: "partly", C: "cloud", F: "fog", R: "rain", T: "storm", N: "snow" }[w.ic] || "cloud", 308 - tw - 22, 86, 2);
+  }
+  const ev = p.ev || { l: [] };
+  let line = "", col = "#64a5ff";
+  if (a.stale) { line = "PLACA OFFLINE"; col = "#eb5046"; }
+  else if (ev.l && ev.l.length) { line = `${ev.l[0][0]} ${ev.l[0][1]}`; if (ev.l[0][2]) col = "#ff8c28"; }
+  line = line.toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
+  const lw = pxWidth(line) * 3;
+  const off = lw > 296 ? 296 - ((a.fr >> 1) % (lw + 296)) : 0;  // rola se nao couber
+  pxBig(ctx, line, 12 + off, 110, 3, col, [12, 308]);
+}
+
+// ---- relogio pixel: faixa 32x8 de LEDs com apps se alternando ----
+function renderPixel(el, p) {
+  if (!el.querySelector("canvas.px")) el.innerHTML = "";
+  const cv = animCanvas(el, "px");
+  const a = anims.get(cv) || { kind: "pixel", idx: 0, fr: 0, t0: 0, prev: null, tr: 99 };
+  const sig = (p.lay.a || []).map((x) => x[0] + x[3]).join();
+  if (sig !== a.sig) { Object.assign(a, { idx: 0, t0: a.fr, tr: 99, sig }); }
+  a.p = p;
+  anims.set(cv, a);
+}
+function pxFrameBuf(app, fr) {
+  const buf = Array.from({ length: 8 }, () => Array(32).fill(null));
+  const [icon, col, , clk, txt] = app;
+  const d = new Date();
+  const t = clk ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : txt;
+  const x0 = icon !== "none" && PX.icons[icon] ? 9 : 0, avail = 32 - x0, tw = pxWidth(t);
+  const off = tw <= avail ? x0 + ((avail - tw) >> 1) : x0 + avail - ((fr >> 1) % (tw + avail));
+  const colon = clk && d.getSeconds() % 2 ? "#555" : null;
+  let cx = 0, ci = 0;
+  const pos = [];  // coluna inicial de cada caractere (para pintar o ":" piscando)
+  for (const ch of t) { pos.push(cx); cx += (PX.font[ch] || PX.font[" "])[1] + 1; }
+  pxEach(t, (x, y) => {
+    const X = off + x;
+    if (X < x0 || X > 31) return;
+    const isColon = clk && t[2] === ":" && x === pos[2];
+    buf[y + 1][X] = isColon && colon ? colon : c565(col);
+  });
+  if (x0) PX.icons[icon].forEach((c, i) => { if (c) buf[(i / 8) | 0][i % 8] = c; });
+  return { buf, frames: Math.max(app[2] * 30, tw > avail ? (tw + avail) * 2 : 0) };
+}
+function drawPixel(cv, a) {
+  const ctx = cv.getContext("2d"), apps = a.p.lay.a || [];
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 240);
+  if (!apps.length) { pxBig(ctx, "SEM APPS", 112, 112, 3, "#555"); return; }
+  if (a.idx >= apps.length) a.idx = 0;
+  let { buf, frames } = pxFrameBuf(apps[a.idx], a.fr - a.t0);
+  if (a.fr - a.t0 >= frames && apps.length > 1) {  // proximo app
+    a.prev = buf; a.idx = (a.idx + 1) % apps.length; a.t0 = a.fr; a.tr = 0;
+    buf = pxFrameBuf(apps[a.idx], 0).buf;
+  }
+  let show = buf;
+  if (a.p.lay.tr === "slide" && a.prev && a.tr < 16) {  // desliza para cima em 8 passos
+    const k = (a.tr >> 1) + 1;
+    show = buf.map((_, y) => (y < 8 - k ? a.prev[y + k] : buf[y - (8 - k)]));
+    a.tr++;
+  }
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 32; x++) {
+    ctx.fillStyle = show[y][x] || "#16161a";
+    ctx.beginPath(); ctx.roundRect(x * 10 + 1, 80 + y * 10 + 1, 8, 8, 2); ctx.fill();
+  }
+  const n = apps.length, x0 = 160 - (n * 10 - 4) / 2;
+  apps.forEach((_, i) => { ctx.fillStyle = i === a.idx ? "#fff" : "#444"; ctx.fillRect(x0 + i * 10, 172, 6, 3); });
+}
+setInterval(() => {
+  if (!PX) return;
+  for (const [cv, a] of anims) {
+    if (!cv.isConnected) { anims.delete(cv); continue; }
+    a.fr++;
+    if (a.kind === "clock") drawClock(cv, a); else drawPixel(cv, a);
+  }
+}, 33);
+// Apps de uma tela em edicao (o servidor so calcula as telas salvas): mesma regra de pixel_apps()
+function appsLocal(s) {
+  const now = new Date(), DI = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+  const hexTo565 = (h) => { const r = parseInt(h.slice(1, 3), 16), g = parseInt(h.slice(3, 5), 16), b = parseInt(h.slice(5, 7), 16); return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3) || 1; };
+  const clean = (t) => String(t).replace(/°/g, "~").normalize("NFKD").replace(/[^\x20-\x7e]/g, "").toUpperCase().split("").map((c) => (PX.font[c] ? c : " ")).join("").slice(0, 60);
+  const WI = { S: "sun", P: "partly", C: "cloud", F: "fog", R: "rain", T: "storm", N: "snow" };
+  const AUTO = { clock: "clock", date: "calendar", event: "calendar", cpu: "cpu", text: "heart", quote: "dollar" };
+  const out = [];
+  for (const a of s.apps || []) {
+    let text = "", auto = AUTO[a.type] || "heart", clk = 0;
+    if (a.type === "clock") clk = 1;
+    else if (a.type === "date") text = `${DI[now.getDay()]} ${String(now.getDate()).padStart(2, "0")}`;
+    else if (a.type === "weather") { if (!S.weather) continue; text = `${S.weather.tc}~C`; auto = S.weather.ic === "S" && !S.weather.day ? "moon" : WI[S.weather.ic] || "cloud"; }
+    else if (a.type === "quote") { const q = S.quotes.find((x) => x.pair === a.pair); if (!q) continue; text = q.bid >= 1000 ? `${Math.round(q.bid / 1000)}K` : fmtBRL(q.bid); auto = { USD: "dollar", EUR: "euro", BTC: "bitcoin" }[q.lbl] || "dollar"; }
+    else if (a.type === "event") { const e = S.events[0]; if (!e) continue; text = `${e.label} ${e.title}`; }
+    else if (a.type === "cpu") { if (!S.pc.online || !S.sys) continue; text = `${Math.round(S.sys.cpu)}%`; }
+    else if (a.type === "text") text = a.text || "";
+    out.push([a.icon === "auto" || !a.icon ? auto : a.icon, hexTo565(a.color || "#ffffff"), +a.dur || 6, clk, clean(text)]);
+  }
+  return out;
 }
 function sceneHtml(sc) {
   if (sc === "aquarium") return "<i>🐟</i><i>🐠</i><i>🐡</i><b>°</b><b>°</b><u></u>";
@@ -290,6 +440,7 @@ function sceneHtml(sc) {
 }
 function renderScreen(el, p, live) {
   if (p.lay.f === "clock") return renderClock(el, p, live);
+  if (p.lay.f === "pixel") return renderPixel(el, p);
   const stale = live && !(S.device.at && S.now - S.device.at < 5);
   const ev = p.ev;
   el.innerHTML = `
@@ -342,7 +493,22 @@ function renderScreens() {
         ${(s.kind || "grid") === "clock" ? `
         <div class="opts">
           <span class="muted">Animacao</span><select data-f="scene">${opts(SCENES, s.scene || "aquarium")}</select>
+          <span class="muted">Cor da hora</span><input type="color" data-f="color" value="${esc(s.color || "#ffd23c")}">
           <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="seconds" ${s.seconds !== false ? "checked" : ""}> segundos</label>
+        </div>` : (s.kind || "grid") === "pixel" ? `
+        <div class="opts"><span class="muted">Transicao</span><select data-f="trans">${opts(TRANS, s.trans || "slide")}</select>
+          <span class="muted">Apps alternam na ordem abaixo</span></div>
+        <div class="apps">${(s.apps || []).map((a, j) => `
+          <div class="app" data-j="${j}">
+            <select data-a="type" data-rebuild>${opts(APP_TYPES, a.type)}</select>
+            <select data-a="icon" title="Icone">${opts({ auto: "icone auto", none: "sem icone", ...Object.fromEntries(Object.keys(PX?.icons || {}).map((k) => [k, k])) }, a.icon || "auto")}</select>
+            <input type="color" data-a="color" value="${esc(a.color || "#ffffff")}" title="Cor do texto">
+            <input type="number" data-a="dur" min="2" max="60" value="${+a.dur || 6}" title="Segundos na tela" style="width:56px">
+            ${a.type === "text" ? `<input data-a="text" value="${esc(a.text || "")}" maxlength="60" placeholder="Texto" style="flex:1;min-width:90px">` : ""}
+            ${a.type === "quote" ? `<select data-a="pair">${opts(Object.fromEntries((S.quote_pairs || []).map((x) => [x, x.replace("-BRL", "")])), a.pair || "USD-BRL")}</select>` : ""}
+            <span class="mv"><button class="ghost" data-mv="-1" title="Subir">↑</button><button class="ghost" data-mv="1" title="Descer">↓</button><button class="ghost" data-rm title="Remover">✕</button></span>
+          </div>`).join("")}
+          <button data-addapp ${(s.apps || []).length >= 8 ? "disabled" : ""}>+ App</button>
         </div>` : `
         <div class="slots">
           <div><label>Esquerda</label><select data-f="left">${opts(WIDGETS_HALF, s.left)}</select></div>
@@ -361,6 +527,29 @@ function renderScreens() {
           if ("rebuild" in inp.dataset) { box.innerHTML = ""; renderScreens(); } else paintPreviews();
         };
       });
+      // ---- apps do relogio pixel ----
+      const rebuild = () => { markDirty(); box.innerHTML = ""; renderScreens(); };
+      el.querySelectorAll(".app").forEach((row) => {
+        const j = +row.dataset.j, app = draft[i].apps[j];
+        row.querySelectorAll("[data-a]").forEach((inp) => {
+          inp.oninput = () => {
+            app[inp.dataset.a] = inp.type === "number" ? +inp.value : inp.value;
+            if ("rebuild" in inp.dataset) rebuild(); else { markDirty(); paintPreviews(); }
+          };
+        });
+        row.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => {
+          const k = j + +b.dataset.mv, arr = draft[i].apps;
+          if (k < 0 || k >= arr.length) return;
+          [arr[j], arr[k]] = [arr[k], arr[j]]; rebuild();
+        }));
+        row.querySelector("[data-rm]").onclick = () => { draft[i].apps.splice(j, 1); rebuild(); };
+      });
+      const add = el.querySelector("[data-addapp]");
+      if (add) add.onclick = () => {
+        draft[i].apps = draft[i].apps || [];
+        draft[i].apps.push({ type: "text", icon: "auto", color: "#ffffff", dur: 6, text: "OLA", pair: "USD-BRL" });
+        rebuild();
+      };
       el.querySelector("[data-del]").onclick = () => {
         if (draft.length === 1) return toast("Precisa existir pelo menos uma tela");
         if (!confirm(`Apagar a tela "${draft[i].name}"?`)) return;
@@ -377,7 +566,9 @@ function paintPreviews() {
     const base = Object.values(S.payloads)[0];
     const p = { ...base, sys: S.pc.online ? S.sys : null, w: S.payloads[Object.keys(S.payloads).find((k) => S.payloads[k].w)]?.w || { ok: 0, city: "" },
       fx: Object.values(S.payloads).find((x) => x.fx)?.fx || fxLocal(), ev: Object.values(S.payloads).find((x) => x.ev)?.ev || { st: "off", l: [] },
-      lay: s.kind === "clock" ? { f: "clock", sc: s.scene || "aquarium", sec: s.seconds !== false ? 1 : 0 } : { l: s.left, r: s.right, b: s.bottom } };
+      lay: s.kind === "clock" ? { f: "clock", sc: s.scene || "aquarium", sec: s.seconds !== false ? 1 : 0, col: hex565(s.color || "#ffd23c") }
+        : s.kind === "pixel" ? { f: "pixel", tr: s.trans || "slide", a: PX ? appsLocal(s) : [] }
+        : { l: s.left, r: s.right, b: s.bottom } };
     renderScreen(el.querySelector("[data-prev]"), p, false);
     el.classList.toggle("active", s.id === S.active);
     el.querySelector("[data-badge]").style.display = s.id === S.active ? "" : "none";
@@ -387,6 +578,10 @@ function fxLocal() {
   if (!S.quotes.length) return { ok: 0, msg: "buscando..." };
   return { ok: 1, at: "", l: S.quotes.map((q) => [q.lbl, fmtBRL(q.bid), q.ch]) };
 }
+function hex565(h) {
+  const r = parseInt(h.slice(1, 3), 16), g = parseInt(h.slice(3, 5), 16), b = parseInt(h.slice(5, 7), 16);
+  return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3) || 1;
+}
 // Mesmo criterio do servidor (quotes.fmt_brl): grandes sem centavos, pequenos com 2-3 casas.
 function fmtBRL(v) {
   const dec = v >= 1000 ? 0 : v >= 1 ? 2 : 3;
@@ -394,7 +589,8 @@ function fmtBRL(v) {
 }
 $("scr-add").onclick = () => {
   const name = prompt("Nome da nova tela:", "Nova tela"); if (!name) return;
-  draft.push({ id: slug(name), name, kind: "grid", left: "w", right: "fx", bottom: "ev", scene: "aquarium", seconds: true });
+  draft.push({ id: slug(name), name, kind: "grid", left: "w", right: "fx", bottom: "ev", scene: "aquarium", seconds: true, color: "#ffd23c",
+    trans: "slide", apps: [{ type: "clock", icon: "auto", color: "#ffffff", dur: 10 }, { type: "weather", icon: "auto", color: "#ffd23c", dur: 5 }] });
   markDirty(); $("screens").innerHTML = ""; renderScreens();
 };
 $("scr-save").onclick = async () => {
@@ -584,6 +780,7 @@ async function refresh() {
   renderScreens(); renderBoard(); renderWeather(); renderQuotes(); renderGoogle(); renderEvents();
   settingsLoaded = true;
 }
+api("/api/pixel_assets").then((j) => { PX = j; $("screens").innerHTML = ""; if (S) renderScreens(); }).catch(() => {});
 refresh(); setInterval(refresh, 2000);
 </script>
 </body>

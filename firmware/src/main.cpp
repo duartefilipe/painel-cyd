@@ -23,6 +23,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 
+#include "pixel_draw.h"
 #include "scenes.h"
 
 TFT_eSPI tft;
@@ -101,17 +102,29 @@ unsigned long lastMsg = 0, lastPoll = 0;
 bool everGot = false;
 bool wasStale = true;
 
-// ---------- relogio de mesa (lay.f = "clock") ----------
-bool clockMode = false;
+// ---------- modos animados ----------
+// GRID: 3 regioes (redesenha a cada resposta). CLOCK: relogio de mesa, animacao em tela
+// cheia com hora pixelada por cima. PIXEL: faixa de LEDs 32x8 com apps se alternando.
+enum Mode { M_GRID, M_CLOCK, M_PIXEL };
+Mode mode = M_GRID;
 char sceneName[10] = "";
 bool showSec = true;
+uint16_t clockCol = 0xFE87;
 long epBase = 0;            // segundos locais desde 1970, vindos do servidor
 unsigned long epAt = 0;     // millis() de quando epBase chegou
 uint32_t frameNo = 0;
 unsigned long lastFrame = 0;
-int lastSecDrawn = -1;
-constexpr unsigned long FRAME_MS = 33;        // ~30 quadros/s
-constexpr unsigned long POLL_CLOCK_MS = 4000; // no relogio o pedido HTTP trava a animacao: pede menos
+constexpr unsigned long FRAME_MS = 33;       // ~30 quadros/s
+constexpr unsigned long POLL_ANIM_MS = 4000; // nos modos animados o pedido HTTP trava a animacao: pede menos
+
+struct PxApp { char icon[10]; uint16_t col; uint8_t dur; bool clk; char tx[64]; };
+constexpr int MAX_APPS = 8;
+PxApp pxApps[MAX_APPS];
+int nPxApps = 0;
+char pxSig[96] = "";         // muda quando a lista de apps muda (reinicia a rotacao)
+bool pxSlide = true;
+int pxIdx = 0, pxShownIdx = -1;
+uint32_t pxT0 = 0, pxTr = 99;
 
 char srvUrl[96] = "http://192.168.31.229:8765";
 char srvToken[72] = "";
@@ -214,7 +227,7 @@ void arrow(int x, int y, bool down, uint16_t c) {
 }
 
 // ---------- secoes ----------
-bool isStale() { return !everGot || millis() - lastMsg > (clockMode ? POLL_CLOCK_MS * 3 : STALE_MS); }
+bool isStale() { return !everGot || millis() - lastMsg > (mode != M_GRID ? POLL_ANIM_MS * 3 : STALE_MS); }
 
 void drawHeader() {
   spr.createSprite(W, H_HEADER);
@@ -421,89 +434,164 @@ void drawAgenda() {
 // ---------- relogio de mesa ----------
 long nowLocal() { return epBase + (long)((millis() - epAt) / 1000); }
 
-// Metade de cima (320x120): hora grande, data, tempo e proximo compromisso.
-// Sprite de 8 bits (38 KB) criado e liberado a cada segundo.
-void drawClockTop() {
+// Copia em maiusculas (a fonte pixelada so tem maiusculas).
+void upcase(const char* src, char* out, size_t sz) {
+  size_t i = 0;
+  for (; src[i] && i < sz - 1; i++) out[i] = toupper((unsigned char)src[i]);
+  out[i] = '\0';
+}
+
+const char* weatherIconName(char ic, bool day) {
+  switch (ic) {
+    case 'S': return day ? "sun" : "moon";
+    case 'P': return "partly";
+    case 'F': return "fog";
+    case 'R': return "rain";
+    case 'T': return "storm";
+    case 'N': return "snow";
+    default: return "cloud";
+  }
+}
+
+// Relogio de mesa: quadro da animacao + informacoes pixeladas por cima, no mesmo sprite
+// (tela cheia, 8 bits), enviado de uma vez para nao piscar.
+void clockFrame() {
+  TFT_eSprite& s = sceneSpr;
+  sceneFrame(s, frameNo);
+  bool stale = isStale();
+
   long e = nowLocal();
-  int hh = (e / 3600) % 24, mm = (e / 60) % 60, ss = e % 60;
-  lastSecDrawn = ss;
-
-  spr.setColorDepth(8);
-  if (!spr.createSprite(W, 120)) {
-    spr.setColorDepth(16);
-    return;
-  }
-  spr.fillSprite(C_BG);
-
   char hm[6], sc[3];
-  snprintf(hm, sizeof(hm), "%02d:%02d", hh, mm);
-  snprintf(sc, sizeof(sc), "%02d", ss);
-  int tw = spr.textWidth(hm, 8);
-  int sw = showSec ? spr.textWidth("00", 4) + 6 : 0;
-  int x = (W - tw - sw) / 2;
-  spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(isStale() ? C_MUTED : C_TEXT, C_BG);
-  spr.drawString(hm, x, 4, 8);
-  if (showSec) {
-    spr.setTextColor(C_ACCENT, C_BG);
-    spr.drawString(sc, x + tw + 6, 8, 4);
+  snprintf(hm, sizeof(hm), "%02ld:%02ld", (e / 3600) % 24, (e / 60) % 60);
+  snprintf(sc, sizeof(sc), "%02ld", e % 60);
+  const int K = 12, KS = 5;
+  int wHM = pxWidth(hm) * K, wS = showSec ? pxWidth(sc) * KS + 8 : 0;
+  int x = (W - wHM - wS) / 2;
+  pxBig(s, hm, x, 14, K, stale ? C_MUTED : clockCol);
+  if (showSec) pxBig(s, sc, x + wHM + 8, 14, KS, C_ACCENT);
+
+  char buf[64];
+  upcase(S.data, buf, sizeof(buf));
+  pxBig(s, buf, 12, 88, 3, rgb(200, 204, 212));
+  if (S.wOk) {
+    char t[10];
+    snprintf(t, sizeof(t), "%d~C", S.tc);
+    int tw = pxWidth(t) * 3;
+    pxBig(s, t, 308 - tw, 88, 3, C_TEXT);
+    pxIconBig(s, weatherIconName(S.ic, S.day), 308 - tw - 22, 86, 2);
   }
 
-  // linha 1: data | tempo
-  spr.setTextColor(C_MUTED, C_BG);
-  spr.drawString(S.data, 10, 82, 2);
-  if (S.wOk) {
-    char t[8];
-    snprintf(t, sizeof(t), "%d", S.tc);
-    spr.setTextDatum(TR_DATUM);
-    spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString("C", W - 10, 82, 2);
-    int cw = spr.textWidth("C", 2);
-    degree(W - 10 - cw - 4, 85, 2, C_TEXT);
-    spr.drawString(t, W - 10 - cw - 9, 82, 2);
-    weatherIcon(W - 10 - cw - 9 - spr.textWidth(t, 2) - 26, 80, 0.55f, S.ic, S.day);
-  }
-  // linha 2: proximo compromisso (ou motivo de estar sem dados)
-  spr.setTextDatum(TL_DATUM);
-  if (isStale() && linkErr[0]) {
-    spr.fillCircle(14, 108, 3, C_BAD);
-    spr.setTextColor(C_BAD, C_BG);
-    spr.drawString(linkErr, 22, 101, 2);
+  // proximo compromisso (rola se nao couber) ou o motivo de estar sem dados
+  uint16_t col = C_BLUE;
+  buf[0] = '\0';
+  if (stale && linkErr[0]) {
+    upcase(linkErr, buf, sizeof(buf));
+    col = C_BAD;
   } else if (S.nev > 0) {
-    const Ev& ev = S.ev[0];
-    spr.setTextColor(ev.now ? C_ACCENT : C_BLUE, C_BG);
-    spr.drawString(ev.when, 10, 101, 2);
-    char t[52];
-    int wx = 10 + spr.textWidth(ev.when, 2) + 8;
-    fitText(ev.title, t, sizeof(t), W - wx - 10, 2);
-    spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString(t, wx, 101, 2);
+    char raw[72];
+    snprintf(raw, sizeof(raw), "%s %s", S.ev[0].when, S.ev[0].title);
+    upcase(raw, buf, sizeof(buf));
+    if (S.ev[0].now) col = C_ACCENT;
   }
-  spr.pushSprite(0, 0);
-  spr.deleteSprite();
-  spr.setColorDepth(16);
+  if (buf[0]) {
+    int lw = pxWidth(buf) * 3, avail = 296;
+    int off = lw > avail ? avail - (int)((frameNo >> 1) % (lw + avail)) : 0;
+    pxBig(s, buf, 12 + off, 110, 3, col, 12, 308);
+  }
+  s.pushSprite(0, 0);
+}
+
+// ---------- relogio pixel (faixa 32x8) ----------
+PxBuf pxCur, pxPrev, pxShow;
+
+// Monta o quadro do app; devolve quantos quadros ele fica na tela.
+uint32_t pixelBuild(PxBuf b, const PxApp& a, uint32_t f) {
+  char t[64];
+  long e = nowLocal();
+  if (a.clk) snprintf(t, sizeof(t), "%02ld:%02ld", (e / 3600) % 24, (e / 60) % 60);
+  else strlcpy(t, a.tx, sizeof(t));
+  bool icon = strcmp(a.icon, "none") != 0 && pxHasIcon(a.icon);
+  int x0 = icon ? 9 : 0, avail = 32 - x0, tw = pxWidth(t);
+  int off = tw <= avail ? x0 + (avail - tw) / 2 : x0 + avail - (int)((f >> 1) % (tw + avail));
+  pxBufClear(b);
+  // ":" da hora pisca (fica cinza nos segundos impares)
+  pxBufText(b, t, off, 1, a.col, x0, 32, a.clk && (e % 2) ? 2 : -1, rgb(85, 85, 85));
+  if (icon) pxBufIcon(b, a.icon, 0);
+  uint32_t frames = a.dur * (1000 / FRAME_MS);
+  if (tw > avail) frames = max(frames, (uint32_t)(tw + avail) * 2);  // rola o texto inteiro pelo menos uma vez
+  return frames;
+}
+
+void pixelFrame() {
+  TFT_eSprite& s = sceneSpr;
+  if (nPxApps == 0) {
+    pxBufClear(pxShow);
+    pxBufText(pxShow, "SEM APPS", 1, 1, C_MUTED, 0, 32);
+  } else {
+    if (pxIdx >= nPxApps) pxIdx = 0;
+    uint32_t frames = pixelBuild(pxCur, pxApps[pxIdx], frameNo - pxT0);
+    if (frameNo - pxT0 >= frames && nPxApps > 1) {
+      memcpy(pxPrev, pxCur, sizeof(PxBuf));
+      pxIdx = (pxIdx + 1) % nPxApps;
+      pxT0 = frameNo;
+      pxTr = 0;
+      pixelBuild(pxCur, pxApps[pxIdx], 0);
+    }
+    if (pxSlide && pxTr < 16) {  // desliza para cima em 8 passos
+      int k = (pxTr >> 1) + 1;
+      for (int y = 0; y < 8; y++) memcpy(pxShow[y], y < 8 - k ? pxPrev[y + k] : pxCur[y - (8 - k)], sizeof(pxShow[y]));
+      pxTr++;
+    } else {
+      memcpy(pxShow, pxCur, sizeof(PxBuf));
+    }
+  }
+  s.fillSprite(TFT_BLACK);
+  const uint16_t off = rgb(22, 22, 26);
+  for (int y = 0; y < 8; y++)
+    for (int x = 0; x < 32; x++) s.fillRoundRect(x * 10 + 1, y * 10 + 1, 8, 8, 2, pxShow[y][x] ? pxShow[y][x] : off);
+  s.pushSprite(0, 80);
+
+  // indicador de qual app esta na tela (direto na tela, so quando muda)
+  if (pxShownIdx != pxIdx) {
+    pxShownIdx = pxIdx;
+    tft.fillRect(0, 170, W, 8, TFT_BLACK);
+    int n = nPxApps, x0 = 160 - (n * 10 - 4) / 2;
+    for (int i = 0; i < n; i++) tft.fillRect(x0 + i * 10, 172, 6, 3, i == pxIdx ? TFT_WHITE : rgb(68, 68, 68));
+  }
+  // sem dados: aviso discreto em cima da faixa
+  static bool shownStale = false;
+  bool stale = isStale();
+  if (stale != shownStale) {
+    shownStale = stale;
+    tft.fillRect(0, 50, W, 20, TFT_BLACK);
+    if (stale && linkErr[0]) {
+      tft.setTextDatum(TC_DATUM);
+      tft.setTextColor(C_BAD, TFT_BLACK);
+      tft.drawString(linkErr, W / 2, 52, 2);
+    }
+  }
 }
 
 void sceneStop() {
   if (sceneSpr.created()) sceneSpr.deleteSprite();
 }
 
+// Aloca o sprite do modo animado: tela cheia no relogio, faixa 320x80 no pixel.
 void sceneStart() {
   sceneStop();
   sceneSpr.setColorDepth(8);
-  if (!sceneSpr.createSprite(SCENE_W, SCENE_H)) {
-    Serial.println("sem memoria para a animacao");
+  int h = mode == M_PIXEL ? 80 : SCENE_H;
+  if (!sceneSpr.createSprite(SCENE_W, h)) {
+    Serial.printf("sem memoria para a animacao (heap %u)\n", ESP.getFreeHeap());
     return;
   }
-  sceneBegin(sceneName);
+  if (mode == M_CLOCK) sceneBegin(sceneName);
   frameNo = 0;
+  pxShownIdx = -1;
 }
 
 void drawAll() {
-  if (clockMode) {
-    drawClockTop();
-    return;
-  }
+  if (mode != M_GRID) return;  // modos animados desenham no loop
   drawHeader();
   drawHalf(0, S.layL);
   drawHalf(HALF, S.layR);
@@ -567,16 +655,44 @@ bool handlePayload(const String& body) {
   }
 
   JsonObject lay = doc["lay"];
-  bool wantClock = strcmp(lay["f"] | "", "clock") == 0;
+  const char* f = lay["f"] | "";
+  Mode want = !strcmp(f, "clock") ? M_CLOCK : !strcmp(f, "pixel") ? M_PIXEL : M_GRID;
   const char* scn = lay["sc"] | "none";
   showSec = (lay["sec"] | 1) == 1;
-  if (wantClock != clockMode || (wantClock && strcmp(scn, sceneName) != 0)) {
-    // troca de tipo de tela (ou de animacao): limpa e (re)aloca a animacao
-    clockMode = wantClock;
+  clockCol = lay["col"] | 0xFE87;
+  if (want != mode || (want == M_CLOCK && strcmp(scn, sceneName) != 0)) {
+    // troca de tipo de tela (ou de animacao): limpa e (re)aloca o sprite
+    mode = want;
     strlcpy(sceneName, scn, sizeof(sceneName));
-    tft.fillScreen(C_BG);
-    if (clockMode) sceneStart();
-    else sceneStop();
+    tft.fillScreen(mode == M_GRID ? C_BG : TFT_BLACK);
+    if (mode == M_GRID) sceneStop();
+    else sceneStart();
+    pxSig[0] = '\0';
+  }
+  if (mode == M_PIXEL) {
+    pxSlide = strcmp(lay["tr"] | "slide", "none") != 0;
+    // assinatura = icones + tipo; se mudou, recomeca do primeiro app
+    char sig[sizeof(pxSig)] = "";
+    int n = 0;
+    for (JsonArray it : lay["a"].as<JsonArray>()) {
+      if (n >= MAX_APPS) break;
+      PxApp& a = pxApps[n++];
+      strlcpy(a.icon, it[0] | "none", sizeof(a.icon));
+      a.col = it[1] | 0xFFFF;
+      a.dur = constrain((int)(it[2] | 6), 2, 60);
+      a.clk = (it[3] | 0) == 1;
+      strlcpy(a.tx, it[4] | "", sizeof(a.tx));
+      size_t l = strlen(sig);
+      snprintf(sig + l, sizeof(sig) - l, "%s%d,", a.icon, a.clk);
+    }
+    if (n != nPxApps || strcmp(sig, pxSig) != 0) {
+      nPxApps = n;
+      strlcpy(pxSig, sig, sizeof(pxSig));
+      pxIdx = 0;
+      pxT0 = frameNo;
+      pxTr = 99;
+      pxShownIdx = -1;
+    }
   }
   strlcpy(S.layN, lay["n"] | "", sizeof(S.layN));
   strlcpy(S.layL, lay["l"] | "sys", sizeof(S.layL));
@@ -691,7 +807,7 @@ void setupOta() {
   ArduinoOTA.setPassword(srvToken);
   ArduinoOTA.onStart([]() {
     sceneStop();  // libera memoria para receber o firmware
-    clockMode = false;
+    mode = M_GRID;
     drawNotice("Atualizando", "Recebendo firmware pelo Wi-Fi...", "nao desligue a placa");
     tft.drawRect(12, 160, W - 24, 16, C_LINE);
   });
@@ -793,17 +909,17 @@ void setup() {
 
 void loop() {
   ArduinoOTA.handle();
-  if (millis() - lastPoll >= (clockMode ? POLL_CLOCK_MS : POLL_MS)) {
+  if (millis() - lastPoll >= (mode != M_GRID ? POLL_ANIM_MS : POLL_MS)) {
     lastPoll = millis();
     poll();
   }
-  if (clockMode) {
-    // o relogio anda sozinho entre um pedido e outro
-    if (nowLocal() % 60 != lastSecDrawn) drawClockTop();
+  if (mode != M_GRID) {
+    // relogio e pixel andam sozinhos entre um pedido e outro
     if (millis() - lastFrame >= FRAME_MS && sceneSpr.created()) {
       lastFrame = millis();
-      sceneFrame(sceneSpr, frameNo++);
-      sceneSpr.pushSprite(0, 120);
+      if (mode == M_CLOCK) clockFrame();
+      else pixelFrame();
+      frameNo++;
     }
     delay(1);
     return;

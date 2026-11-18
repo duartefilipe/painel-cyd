@@ -19,7 +19,7 @@ struct Bubble { float x, y, v; uint8_t r; };
 constexpr int N_FISH = 6, N_BUB = 10;
 Fish fish[N_FISH];
 Bubble bub[N_BUB];
-constexpr int SAND_Y = 104;
+constexpr int SAND_Y = SCENE_H - 18;
 const int weedX[] = {28, 46, 150, 232, 290};
 
 const uint16_t FISH_COLORS[][2] = {
@@ -34,7 +34,7 @@ void spawnFish(Fish& f, bool anywhere) {
   bool right = esp_random() & 1;
   f.vx = (rnd(4, 11) / 10.0f) * (right ? 1 : -1);
   f.x = anywhere ? rnd(0, SCENE_W) : (right ? -20 : SCENE_W + 20);
-  f.y = rnd(14, SAND_Y - 16);
+  f.y = rnd(40, SAND_Y - 14);
   f.phase = rnd(0, 628) / 100.0f;
   const uint16_t* c = FISH_COLORS[rnd(0, 4)];
   f.body = c[0];
@@ -83,7 +83,7 @@ void aquariumFrame(TFT_eSprite& s, uint32_t fr) {
   for (int x = 3; x < SCENE_W; x += 11) s.drawPixel(x, SAND_Y + 3 + (x * 7) % 11, rgb(150, 120, 80));
   // algas balancando
   for (int i = 0; i < 5; i++) {
-    int hgt = 26 + (i * 13) % 30;
+    int hgt = 40 + (i * 17) % 50;
     for (int k = 0; k < hgt; k += 3) {
       float sw = sinf(fr * 0.05f + k * 0.15f + i) * k * 0.18f;
       s.fillRect(weedX[i] + sw, SAND_Y - k, 3, 3, (k / 3) % 2 ? rgb(40, 160, 80) : rgb(30, 120, 60));
@@ -116,7 +116,7 @@ uint8_t windows[40];  // janelas acesas da cidade (bits)
 void starsBegin() {
   for (auto& st : stars) {
     st.x = rnd(0, SCENE_W - 1);
-    st.y = rnd(0, 80);
+    st.y = rnd(0, SCENE_H - 70);
     st.ph = rnd(0, 628) / 100.0f;
     st.big = rnd(0, 9) == 0;
   }
@@ -137,13 +137,14 @@ void starsFrame(TFT_eSprite& s, uint32_t fr) {
       s.drawPixel(st.x, st.y + 1, rgb(v / 2, v / 2, v / 2));
     }
   }
-  // lua com crateras
-  s.fillCircle(272, 26, 14, rgb(235, 230, 200));
-  s.fillCircle(267, 22, 3, rgb(200, 195, 170));
-  s.fillCircle(277, 31, 2, rgb(200, 195, 170));
-  s.fillCircle(276, 19, 2, rgb(210, 205, 180));
+  // lua com crateras (abaixo das informacoes, acima da cidade)
+  const int MX = 276, MY = 140;
+  s.fillCircle(MX, MY, 14, rgb(235, 230, 200));
+  s.fillCircle(MX - 5, MY - 4, 3, rgb(200, 195, 170));
+  s.fillCircle(MX + 5, MY + 5, 2, rgb(200, 195, 170));
+  s.fillCircle(MX + 4, MY - 7, 2, rgb(210, 205, 180));
   // estrela cadente de vez em quando
-  if (shoot.life <= 0 && rnd(0, 220) == 0) shoot = {(float)rnd(20, 220), (float)rnd(2, 30), 26};
+  if (shoot.life <= 0 && rnd(0, 220) == 0) shoot = {(float)rnd(20, 180), (float)rnd(125, 150), 26};
   if (shoot.life > 0) {
     shoot.x += 5;
     shoot.y += 2;
@@ -154,7 +155,7 @@ void starsFrame(TFT_eSprite& s, uint32_t fr) {
   // silhueta da cidade com janelas que acendem e apagam
   const int8_t bh[] = {28, 40, 22, 52, 34, 46, 26, 58, 30, 42, 24, 48, 36, 30, 44, 26};
   for (int i = 0; i < 16; i++) {
-    int x = i * 20, h = bh[i], y = SCENE_H - h;
+    int x = i * 20, h = bh[i] * 3 / 2, y = SCENE_H - h;
     s.fillRect(x, y, 20, h, rgb(14, 16, 26));
     for (int wy = 0; wy < h / 7; wy++)
       for (int wx = 0; wx < 3; wx++) {
@@ -203,7 +204,7 @@ void matrixFrame(TFT_eSprite& s, uint32_t fr) {
 }
 
 // ---------------------------------------------------------------- fogo
-constexpr int FW = 80, FH = 30, FC = 4;  // 80x30 celulas de 4 px
+constexpr int FC = 4, FW = SCENE_W / FC, FH = SCENE_H / FC;  // celulas de 4 px
 uint8_t heat[FW * FH];
 uint16_t firePal[37];
 
@@ -231,10 +232,14 @@ void fireFrame(TFT_eSprite& s, uint32_t fr) {
         heat[src - FW] = 0;
         continue;
       }
-      int r = esp_random() & 3;
+      uint32_t rr = esp_random();
+      int r = rr & 3;
       int dst = src - FW - r + 1;
       if (dst < 0) dst = 0;
-      heat[dst] = p - (r & 1);
+      // esfria um pouco mais rapido que o classico: a chama ocupa ~2/3 de baixo
+      // e deixa o topo escuro, onde ficam a hora e a data
+      int cool = (r & 1) + (((rr >> 8) % 3) == 0);
+      heat[dst] = p > cool ? p - cool : 0;
     }
   }
   // base oscila para a chama "respirar"

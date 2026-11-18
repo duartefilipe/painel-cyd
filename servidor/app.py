@@ -47,8 +47,42 @@ QUOTES_EVERY = 300      # 5 min
 
 SLOT_HALF = {"sys", "w", "fx", "none"}
 SLOT_BOTTOM = {"ev", "none"}
-KINDS = {"grid", "clock"}            # grid = 3 regioes; clock = relogio de mesa em tela cheia
-SCENES = {"aquarium", "stars", "matrix", "fire", "none"}   # animacao na metade de baixo do relogio
+# grid = 3 regioes; clock = relogio de mesa (animacao em tela cheia + hora pixelada);
+# pixel = faixa de LEDs 32x8 com "apps" que se alternam
+KINDS = {"grid", "clock", "pixel"}
+SCENES = {"aquarium", "stars", "matrix", "fire", "none"}   # animacao de fundo do relogio
+APP_TYPES = {"clock", "date", "weather", "quote", "event", "cpu", "text"}
+TRANSITIONS = {"slide", "none"}
+MAX_APPS = 8
+
+# Fonte e icones pixelados (gerados por tools/pixel_assets.py), os mesmos do firmware.
+import json as _json
+PIXEL = _json.loads((ROOT / "pixel_assets.json").read_text(encoding="utf-8"))
+PX_CHARS = set(PIXEL["font"])
+PX_ICONS = set(PIXEL["icons"])
+WEATHER_ICON = {"S": "sun", "P": "partly", "C": "cloud", "F": "fog", "R": "rain", "T": "storm", "N": "snow"}
+QUOTE_ICON = {"USD": "dollar", "EUR": "euro", "BTC": "bitcoin"}
+APP_ICON = {"clock": "clock", "date": "calendar", "event": "calendar", "cpu": "cpu", "text": "heart", "quote": "dollar"}
+
+
+def px_text(s: str, n: int = 60) -> str:
+    """Texto que a fonte pixelada sabe desenhar: maiusculas, sem acento, ° vira ~."""
+    s = ascii_text(str(s).replace("°", "~"), n).upper()
+    return "".join(c if c in PX_CHARS else " " for c in s)
+
+
+def hex565(h: str, default: int = 0xFFE0) -> int:
+    try:
+        h = h.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3) or 1
+    except (ValueError, IndexError, AttributeError):
+        return default
+
+
+def clean_hex(h, default: str) -> str:
+    h = str(h or "")
+    return h.lower() if len(h) == 7 and h[0] == "#" and all(c in "0123456789abcdefABCDEF" for c in h[1:]) else default
 
 state = {
     "sys": None, "sys_at": None, "agent": None,
@@ -131,9 +165,19 @@ def collect_calendar():
             state.update(cal_status="err", cal_err=str(e))
 
 
+def quote_pairs(cfg: dict) -> list:
+    """Pares do card de cotacoes + os usados em apps de telas pixel."""
+    pairs = list(cfg["quotes"])
+    for s in cfg["screens"]:
+        for a in s.get("apps", []) if s.get("kind") == "pixel" else []:
+            if a.get("type") == "quote" and a.get("pair") in quotes.KNOWN and a["pair"] not in pairs:
+                pairs.append(a["pair"])
+    return pairs
+
+
 def collect_quotes():
     try:
-        q = quotes.fetch(config.load()["quotes"])
+        q = quotes.fetch(quote_pairs(config.load()), limit=8)
         with lock:
             state.update(quotes=q, quotes_at=time.time(), quotes_err=None)
     except Exception as e:
@@ -163,14 +207,61 @@ def active_screen(cfg: dict) -> dict:
     return find_screen(cfg, d["pc_on"] if pc_online(cfg) else d["pc_off"])
 
 
-def fx_block() -> dict:
+def fx_block(cfg: dict) -> dict:
     """Ate 4 linhas [rotulo, valor em R$ ja formatado, variacao %]."""
     with lock:
         q, err, at = list(state["quotes"]), state["quotes_err"], state["quotes_at"]
+    q = [x for x in q if x["pair"] in cfg["quotes"]][:4]  # state tambem tem pares dos apps pixel
     if not q:
         return {"ok": 0, "msg": "sem cotacoes" if err else "buscando..."}
     hm = datetime.fromtimestamp(at, TZ).strftime("%H:%M") if at else ""
     return {"ok": 1, "at": hm, "l": [[x["lbl"], quotes.fmt_brl(x["bid"]), round(x["ch"], 2)] for x in q]}
+
+
+def next_event(evs: list, now: datetime):
+    for ev in evs:
+        if ev["end"] > now:
+            return ev, when_label(ev, now)
+    return None, ("", False)
+
+
+def pixel_apps(scr: dict, cfg: dict, now: datetime, online: bool) -> list:
+    """Cada app vira [icone, cor565, segundos, eh_relogio, texto]. Apps sem dado ficam de fora."""
+    with lock:
+        w, evs, sysm, qs = state["weather"], list(state["events"]), state["sys"], {q["pair"]: q for q in state["quotes"]}
+    out = []
+    for a in scr.get("apps", []):
+        t, icon, text, clk = a.get("type"), a.get("icon", "auto"), "", 0
+        auto = APP_ICON.get(t, "heart")
+        if t == "clock":
+            clk = 1
+        elif t == "date":
+            text = f"{DIAS[now.weekday()]} {now.day:02d}"
+        elif t == "weather":
+            if not w:
+                continue
+            text = f"{w['tc']}~C"
+            auto = "moon" if w["ic"] == "S" and not w["day"] else WEATHER_ICON.get(w["ic"], "cloud")
+        elif t == "quote":
+            q = qs.get(a.get("pair", "USD-BRL"))
+            if not q:
+                continue
+            text = f"{q['bid'] / 1000:.0f}K" if q["bid"] >= 1000 else quotes.fmt_brl(q["bid"])
+            auto = QUOTE_ICON.get(q["lbl"], "dollar")
+        elif t == "event":
+            ev, (lbl, _) = next_event(evs, now)
+            if not ev:
+                continue
+            text = f"{lbl} {ev['title']}"
+        elif t == "cpu":
+            if not (online and sysm):
+                continue
+            text = f"{sysm['cpu']:.0f}%"
+        elif t == "text":
+            text = a.get("text", "")
+        out.append([auto if icon == "auto" else icon, hex565(a.get("color", "#ffffff")),
+                    int(a.get("dur", 6)), clk, px_text(text, 60)])
+    return out
 
 
 def build_payload(screen: dict | None = None) -> dict:
@@ -178,15 +269,24 @@ def build_payload(screen: dict | None = None) -> dict:
     scr = screen or active_screen(cfg)
     now = datetime.now(TZ)
     online = pc_online(cfg)
-    clock = scr.get("kind") == "clock"
-    # O relogio mostra tempo e proximo compromisso numa linha cada.
-    slots = {"w", "ev"} if clock else {scr.get("left"), scr.get("right"), scr.get("bottom")}
+    kind = scr.get("kind", "grid")
+    # O relogio de mesa mostra tempo e proximo compromisso; o pixel monta os proprios textos.
+    if kind == "clock":
+        slots = {"w", "ev"}
+    elif kind == "pixel":
+        slots = set()
+    else:
+        slots = {scr.get("left"), scr.get("right"), scr.get("bottom")}
     with lock:
         w, evs, st, err, sysm = state["weather"], list(state["events"]), state["cal_status"], state["cal_err"], state["sys"]
 
-    if clock:
+    if kind == "clock":
         lay = {"n": ascii_text(scr["name"], 14), "f": "clock",
-               "sc": scr.get("scene", "aquarium"), "sec": 1 if scr.get("seconds", True) else 0}
+               "sc": scr.get("scene", "aquarium"), "sec": 1 if scr.get("seconds", True) else 0,
+               "col": hex565(scr.get("color", "#ffd23c"))}
+    elif kind == "pixel":
+        lay = {"n": ascii_text(scr["name"], 14), "f": "pixel", "tr": scr.get("trans", "slide"),
+               "a": pixel_apps(scr, cfg, now, online)}
     else:
         lay = {"n": ascii_text(scr["name"], 14), "l": scr.get("left", "none"),
                "r": scr.get("right", "none"), "b": scr.get("bottom", "none")}
@@ -211,7 +311,7 @@ def build_payload(screen: dict | None = None) -> dict:
         else:
             p["w"] = {"ok": 0, "city": ascii_text(cfg["city"]["name"], 22)}
     if "fx" in slots:
-        p["fx"] = fx_block()
+        p["fx"] = fx_block(cfg)
     if "ev" in slots:
         lst = []
         for ev in evs:
@@ -230,6 +330,36 @@ def build_payload(screen: dict | None = None) -> dict:
     return p
 
 
+DEFAULT_APPS = [
+    {"type": "clock", "icon": "auto", "color": "#ffffff", "dur": 10},
+    {"type": "weather", "icon": "auto", "color": "#ffd23c", "dur": 5},
+    {"type": "date", "icon": "auto", "color": "#64a5ff", "dur": 4},
+    {"type": "event", "icon": "auto", "color": "#ff8c28", "dur": 8},
+]
+
+
+def clean_apps(apps) -> list:
+    if not isinstance(apps, list):
+        return [dict(a) for a in DEFAULT_APPS]
+    out = []
+    for a in apps[:MAX_APPS]:
+        if not isinstance(a, dict) or a.get("type") not in APP_TYPES:
+            continue
+        try:
+            dur = max(2, min(60, int(a.get("dur", 6))))
+        except (TypeError, ValueError):
+            dur = 6
+        out.append({
+            "type": a["type"],
+            "icon": a.get("icon") if a.get("icon") in PX_ICONS or a.get("icon") == "none" else "auto",
+            "color": clean_hex(a.get("color"), "#ffffff"),
+            "dur": dur,
+            "text": px_text(a.get("text", ""), 60) if a["type"] == "text" else "",
+            "pair": a.get("pair") if a.get("pair") in quotes.KNOWN else "USD-BRL",
+        })
+    return out
+
+
 def clean_screens(screens) -> list:
     out, seen = [], set()
     for s in screens if isinstance(screens, list) else []:
@@ -246,6 +376,9 @@ def clean_screens(screens) -> list:
             "bottom": s.get("bottom") if s.get("bottom") in SLOT_BOTTOM else "none",
             "scene": s.get("scene") if s.get("scene") in SCENES else "aquarium",
             "seconds": bool(s.get("seconds", True)),
+            "color": clean_hex(s.get("color"), "#ffd23c"),
+            "trans": s.get("trans") if s.get("trans") in TRANSITIONS else "slide",
+            "apps": clean_apps(s.get("apps")),
         })
     if not out:
         raise ValueError("Precisa existir pelo menos uma tela")
@@ -286,6 +419,12 @@ def healthz():
 @app.get("/")
 def index():
     return send_from_directory(ROOT / "web", "index.html")
+
+
+@app.get("/api/pixel_assets")
+def api_pixel_assets():
+    """Fonte e icones pixelados para a previa do painel (mesmos dados do firmware)."""
+    return jsonify(PIXEL)
 
 
 @app.get("/api/screen")
@@ -369,7 +508,7 @@ def api_config():
         wake["weather"].set()
     if cfg["calendars"] != before["calendars"] or cfg["days_ahead"] != before["days_ahead"]:
         wake["calendar"].set()
-    if cfg["quotes"] != before["quotes"]:
+    if quote_pairs(cfg) != quote_pairs(before):
         wake["quotes"].set()
     return jsonify(cfg)
 
