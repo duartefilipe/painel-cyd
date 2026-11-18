@@ -2,8 +2,10 @@
 # Defina PAINEL_TOKEN em "Environment variables" da stack (NAO no git).
 services:
   painel-cyd:
+    # Sem "image:": a imagem e sempre construida a partir do repositorio.
+    # pull_policy: build evita que "Pull and redeploy" tente baixar do Docker Hub.
     build: .
-    image: painel-cyd:latest
+    pull_policy: build
     container_name: painel-cyd
     restart: unless-stopped
     ports:

@@ -13,6 +13,7 @@ O cabeçalho da placa fica vermelho e mostra o motivo quando passa 5 s sem dados
 | Modo automático não troca de tela | o agente ainda está enviando, ou o tempo-limite ainda não passou | a troca acontece `pc_timeout` segundos (padrão 10) depois do último envio |
 | Navegador pede senha em loop | senha diferente do `PAINEL_TOKEN` | usuário qualquer, senha = token da stack |
 | Stack não sobe: **"defina PAINEL_TOKEN"** | variável não criada na stack | Portainer → stack → **Environment variables** |
+| Redeploy: **"pull access denied for painel-cyd"** | compose antigo com `image:`; o Portainer tentou baixar a imagem do Docker Hub | atualize a stack para a versão atual do `docker-compose.yml` (`pull_policy: build`); enquanto isso, desligue **Re-pull image** no redeploy |
 | Stack não sobe: erro ao clonar | repositório privado sem autenticação | ligue **Authentication** na stack com um token do GitHub de leitura |
 | Cores em **negativo** (fundo claro) | lote da CYD com painel invertido | marque **inverter** no card Placa |
 | Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` ([instalacao.md](instalacao.md#hardware)) |
