@@ -16,14 +16,18 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 
+#include "scenes.h"
+
 TFT_eSPI tft;
 TFT_eSprite spr(&tft);
+TFT_eSprite sceneSpr(&tft);  // animacao do relogio: 8 bits, alocado so no modo relogio
 Preferences prefs;
 
 // ---------- cores (tokens) ----------
@@ -96,6 +100,18 @@ int cfgBr = 200, cfgInv = 0, cfgRot = 1;
 unsigned long lastMsg = 0, lastPoll = 0;
 bool everGot = false;
 bool wasStale = true;
+
+// ---------- relogio de mesa (lay.f = "clock") ----------
+bool clockMode = false;
+char sceneName[10] = "";
+bool showSec = true;
+long epBase = 0;            // segundos locais desde 1970, vindos do servidor
+unsigned long epAt = 0;     // millis() de quando epBase chegou
+uint32_t frameNo = 0;
+unsigned long lastFrame = 0;
+int lastSecDrawn = -1;
+constexpr unsigned long FRAME_MS = 33;        // ~30 quadros/s
+constexpr unsigned long POLL_CLOCK_MS = 4000; // no relogio o pedido HTTP trava a animacao: pede menos
 
 char srvUrl[96] = "http://192.168.31.229:8765";
 char srvToken[72] = "";
@@ -198,7 +214,7 @@ void arrow(int x, int y, bool down, uint16_t c) {
 }
 
 // ---------- secoes ----------
-bool isStale() { return !everGot || millis() - lastMsg > STALE_MS; }
+bool isStale() { return !everGot || millis() - lastMsg > (clockMode ? POLL_CLOCK_MS * 3 : STALE_MS); }
 
 void drawHeader() {
   spr.createSprite(W, H_HEADER);
@@ -402,7 +418,92 @@ void drawAgenda() {
   spr.deleteSprite();
 }
 
+// ---------- relogio de mesa ----------
+long nowLocal() { return epBase + (long)((millis() - epAt) / 1000); }
+
+// Metade de cima (320x120): hora grande, data, tempo e proximo compromisso.
+// Sprite de 8 bits (38 KB) criado e liberado a cada segundo.
+void drawClockTop() {
+  long e = nowLocal();
+  int hh = (e / 3600) % 24, mm = (e / 60) % 60, ss = e % 60;
+  lastSecDrawn = ss;
+
+  spr.setColorDepth(8);
+  if (!spr.createSprite(W, 120)) {
+    spr.setColorDepth(16);
+    return;
+  }
+  spr.fillSprite(C_BG);
+
+  char hm[6], sc[3];
+  snprintf(hm, sizeof(hm), "%02d:%02d", hh, mm);
+  snprintf(sc, sizeof(sc), "%02d", ss);
+  int tw = spr.textWidth(hm, 8);
+  int sw = showSec ? spr.textWidth("00", 4) + 6 : 0;
+  int x = (W - tw - sw) / 2;
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(isStale() ? C_MUTED : C_TEXT, C_BG);
+  spr.drawString(hm, x, 4, 8);
+  if (showSec) {
+    spr.setTextColor(C_ACCENT, C_BG);
+    spr.drawString(sc, x + tw + 6, 8, 4);
+  }
+
+  // linha 1: data | tempo
+  spr.setTextColor(C_MUTED, C_BG);
+  spr.drawString(S.data, 10, 82, 2);
+  if (S.wOk) {
+    char t[8];
+    snprintf(t, sizeof(t), "%d", S.tc);
+    spr.setTextDatum(TR_DATUM);
+    spr.setTextColor(C_TEXT, C_BG);
+    spr.drawString("C", W - 10, 82, 2);
+    int cw = spr.textWidth("C", 2);
+    degree(W - 10 - cw - 4, 85, 2, C_TEXT);
+    spr.drawString(t, W - 10 - cw - 9, 82, 2);
+    weatherIcon(W - 10 - cw - 9 - spr.textWidth(t, 2) - 26, 80, 0.55f, S.ic, S.day);
+  }
+  // linha 2: proximo compromisso (ou motivo de estar sem dados)
+  spr.setTextDatum(TL_DATUM);
+  if (isStale() && linkErr[0]) {
+    spr.fillCircle(14, 108, 3, C_BAD);
+    spr.setTextColor(C_BAD, C_BG);
+    spr.drawString(linkErr, 22, 101, 2);
+  } else if (S.nev > 0) {
+    const Ev& ev = S.ev[0];
+    spr.setTextColor(ev.now ? C_ACCENT : C_BLUE, C_BG);
+    spr.drawString(ev.when, 10, 101, 2);
+    char t[52];
+    int wx = 10 + spr.textWidth(ev.when, 2) + 8;
+    fitText(ev.title, t, sizeof(t), W - wx - 10, 2);
+    spr.setTextColor(C_TEXT, C_BG);
+    spr.drawString(t, wx, 101, 2);
+  }
+  spr.pushSprite(0, 0);
+  spr.deleteSprite();
+  spr.setColorDepth(16);
+}
+
+void sceneStop() {
+  if (sceneSpr.created()) sceneSpr.deleteSprite();
+}
+
+void sceneStart() {
+  sceneStop();
+  sceneSpr.setColorDepth(8);
+  if (!sceneSpr.createSprite(SCENE_W, SCENE_H)) {
+    Serial.println("sem memoria para a animacao");
+    return;
+  }
+  sceneBegin(sceneName);
+  frameNo = 0;
+}
+
 void drawAll() {
+  if (clockMode) {
+    drawClockTop();
+    return;
+  }
   drawHeader();
   drawHalf(0, S.layL);
   drawHalf(HALF, S.layR);
@@ -459,7 +560,24 @@ bool handlePayload(const String& body) {
   strlcpy(S.data, doc["d"] | "", sizeof(S.data));
   S.pc = (doc["pc"] | 0) == 1;
 
+  long ep = doc["ep"] | 0L;
+  if (ep > 0) {
+    epBase = ep;
+    epAt = millis();
+  }
+
   JsonObject lay = doc["lay"];
+  bool wantClock = strcmp(lay["f"] | "", "clock") == 0;
+  const char* scn = lay["sc"] | "none";
+  showSec = (lay["sec"] | 1) == 1;
+  if (wantClock != clockMode || (wantClock && strcmp(scn, sceneName) != 0)) {
+    // troca de tipo de tela (ou de animacao): limpa e (re)aloca a animacao
+    clockMode = wantClock;
+    strlcpy(sceneName, scn, sizeof(sceneName));
+    tft.fillScreen(C_BG);
+    if (clockMode) sceneStart();
+    else sceneStop();
+  }
   strlcpy(S.layN, lay["n"] | "", sizeof(S.layN));
   strlcpy(S.layL, lay["l"] | "sys", sizeof(S.layL));
   strlcpy(S.layR, lay["r"] | "w", sizeof(S.layR));
@@ -564,6 +682,33 @@ void poll() {
   http.end();
 }
 
+// ---------- atualizacao pelo Wi-Fi (OTA) ----------
+// pio run -e cyd-ota -t upload, com CYD_IP e PAINEL_TOKEN no ambiente.
+// A senha do OTA e o proprio PAINEL_TOKEN gravado na placa.
+void setupOta() {
+  if (!srvToken[0]) return;  // sem token, sem OTA (nao abre atualizacao sem senha)
+  ArduinoOTA.setHostname("cyd-painel");
+  ArduinoOTA.setPassword(srvToken);
+  ArduinoOTA.onStart([]() {
+    sceneStop();  // libera memoria para receber o firmware
+    clockMode = false;
+    drawNotice("Atualizando", "Recebendo firmware pelo Wi-Fi...", "nao desligue a placa");
+    tft.drawRect(12, 160, W - 24, 16, C_LINE);
+  });
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+    int w = (W - 28) * done / total;
+    tft.fillRect(14, 162, w, 12, C_ACCENT);
+  });
+  ArduinoOTA.onError([](ota_error_t e) {
+    char m[32];
+    snprintf(m, sizeof(m), "erro OTA %u, reiniciando", e);
+    drawNotice("Falhou", m);
+    delay(2000);
+    ESP.restart();
+  });
+  ArduinoOTA.begin();
+}
+
 // ---------- Wi-Fi e configuracao ----------
 char apPass[10];
 bool saveParams = false;
@@ -630,8 +775,9 @@ void setupWifi() {
     ESP.restart();
   }
   WiFi.setAutoReconnect(true);
-  Serial.printf("Wi-Fi ok, IP %s, servidor %s\n", WiFi.localIP().toString().c_str(), srvUrl);
+  Serial.printf("Wi-Fi ok, IP %s, servidor %s, heap livre %u\n", WiFi.localIP().toString().c_str(), srvUrl, ESP.getFreeHeap());
   tft.fillScreen(C_BG);
+  setupOta();
 }
 
 void setup() {
@@ -646,9 +792,21 @@ void setup() {
 }
 
 void loop() {
-  if (millis() - lastPoll >= POLL_MS) {
+  ArduinoOTA.handle();
+  if (millis() - lastPoll >= (clockMode ? POLL_CLOCK_MS : POLL_MS)) {
     lastPoll = millis();
     poll();
+  }
+  if (clockMode) {
+    // o relogio anda sozinho entre um pedido e outro
+    if (nowLocal() % 60 != lastSecDrawn) drawClockTop();
+    if (millis() - lastFrame >= FRAME_MS && sceneSpr.created()) {
+      lastFrame = millis();
+      sceneFrame(sceneSpr, frameNo++);
+      sceneSpr.pushSprite(0, 120);
+    }
+    delay(1);
+    return;
   }
   // Sem resposta nova, so o cabecalho muda (indicador e motivo da falha).
   static char shownErr[32] = "";

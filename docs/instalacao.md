@@ -58,6 +58,25 @@ pio run -t upload
 Para reconfigurar: **segure o botão BOOT** e ligue a placa (ou aperte RESET com BOOT
 segurado). Isso apaga Wi-Fi e token e abre o portal de novo.
 
+### Atualizar o firmware pelo Wi-Fi (OTA)
+
+Depois de uma gravação pelo USB com o firmware que já tem OTA, as próximas podem ir pela
+rede. Use o IP que aparece no card **Placa** do painel:
+
+```powershell
+$env:CYD_IP = "192.168.31.182"
+$env:PAINEL_TOKEN = "<seu token>"
+cd firmware
+pio run -e cyd-ota -t upload
+```
+
+A placa mostra **Atualizando** com uma barra de progresso e reinicia sozinha. Wi-Fi e
+token são mantidos.
+
+> A primeira gravação depois de atualizar o repositório para esta versão tem que ser
+> **pelo USB**: ela troca a tabela de partições (`min_spiffs.csv`) para caber o OTA. A
+> configuração de Wi-Fi e o token não se perdem.
+
 ### Hardware
 
 - CYD **ESP32-2432S028** com tela ILI9341 (a pinagem vai por *build flag* no
