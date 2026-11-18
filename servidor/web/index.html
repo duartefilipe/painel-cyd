@@ -305,7 +305,12 @@ function paintPreviews() {
 }
 function fxLocal() {
   if (!S.quotes.length) return { ok: 0, msg: "buscando..." };
-  return { ok: 1, at: "", l: S.quotes.map((q) => [q.lbl, q.bid.toLocaleString("pt-BR", { maximumFractionDigits: q.bid >= 1000 ? 0 : 2 }), q.ch]) };
+  return { ok: 1, at: "", l: S.quotes.map((q) => [q.lbl, fmtBRL(q.bid), q.ch]) };
+}
+// Mesmo criterio do servidor (quotes.fmt_brl): grandes sem centavos, pequenos com 2-3 casas.
+function fmtBRL(v) {
+  const dec = v >= 1000 ? 0 : v >= 1 ? 2 : 3;
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 $("scr-add").onclick = () => {
   const name = prompt("Nome da nova tela:", "Nova tela"); if (!name) return;
@@ -383,7 +388,7 @@ $("city-form").onsubmit = async (e) => {
 function renderQuotes() {
   $("quotes-now").innerHTML = S.quotes.length
     ? S.quotes.map((q) => `<div class="row" style="margin:4px 0"><span style="min-width:48px" class="muted">${esc(q.lbl)}</span>
-        <b>R$ ${q.bid.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: q.bid >= 1000 ? 0 : 3 })}</b>
+        <b>R$ ${fmtBRL(q.bid)}</b>
         <span style="color:${q.ch >= 0 ? "var(--good)" : "var(--bad)"}">${q.ch >= 0 ? "+" : ""}${q.ch.toFixed(2)}%</span></div>`).join("")
       + `<div class="muted">atualizado ${ago(S.quotes_at)} · AwesomeAPI</div>`
     : `<span class="${S.quotes_err ? "err" : "muted"}">${esc(S.quotes_err || "Buscando cotacoes...")}</span>`;
