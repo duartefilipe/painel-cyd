@@ -32,9 +32,12 @@ DEFAULTS = {
     # Telas: cada uma escolhe o que vai em cada regiao da CYD.
     #   left/right (160x124): sys | w | fx | none      (fx = cotacoes)
     #   bottom     (320x88):  ev | none
+    # kind "clock": relogio de mesa em tela cheia com animacao (scene) na metade de baixo.
+    #   scene: aquarium | stars | matrix | fire | none
     "screens": [
-        {"id": "trabalho", "name": "Trabalho", "left": "sys", "right": "w", "bottom": "ev"},
-        {"id": "anakin", "name": "Anakin", "left": "fx", "right": "w", "bottom": "ev"},
+        {"id": "trabalho", "name": "Trabalho", "kind": "grid", "left": "sys", "right": "w", "bottom": "ev"},
+        {"id": "anakin", "name": "Anakin", "kind": "grid", "left": "fx", "right": "w", "bottom": "ev"},
+        {"id": "relogio", "name": "Relogio", "kind": "clock", "scene": "aquarium", "seconds": True},
     ],
     # auto: PC conectado -> pc_on, desconectado -> pc_off.  manual: sempre "manual".
     "display": {"mode": "auto", "manual": "trabalho", "pc_on": "trabalho", "pc_off": "anakin"},

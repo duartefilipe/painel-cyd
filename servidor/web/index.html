@@ -63,7 +63,8 @@
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: #1a1006; font-weight: 600; white-space: nowrap; }
 
   /* Previa da tela: mesmo layout do firmware (320x240) */
-  .screen-wrap { display: flex; justify-content: center; overflow-x: auto; }
+  .screen-wrap { display: flex; overflow-x: auto; }
+  .screen-wrap > .screen { margin: 0 auto; }  /* margin auto: centraliza sem cortar a esquerda quando sobra pouco espaco */
   .screen { --k: 1.6; width: calc(320px * var(--k)); height: calc(240px * var(--k)); background: #0c0e12; border: 10px solid #2b2b2b; border-radius: 6px; font-family: "Consolas", monospace; color: #e8eaee; flex: none; overflow: hidden; font-size: calc(9.5px * var(--k)); box-sizing: content-box; }
   .screen.mini { --k: 0.95; border-width: 6px; }
   .screen .hdr { height: calc(28px * var(--k)); display: flex; align-items: center; padding: 0 calc(8px * var(--k)); border-bottom: 1px solid #2c323e; gap: 6px; }
@@ -86,6 +87,39 @@
   .screen .agenda .w { color: var(--blue); width: 9em; flex: none; }
   .screen .agenda .now .w { color: var(--accent); }
   .screen .agenda span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Relogio de mesa (tipo "clock"): metade de cima relogio, metade de baixo animacao */
+  .screen .clk { height: calc(120px * var(--k)); position: relative; text-align: center; padding-top: calc(6px * var(--k)); }
+  .screen .clk .hh { font-size: calc(62px * var(--k)); line-height: 1; letter-spacing: 2px; }
+  .screen .clk .ss { font-size: .32em; color: var(--accent); margin-left: 4px; vertical-align: top; }
+  .screen .clk .info { display: flex; justify-content: space-between; padding: 0 calc(10px * var(--k)); margin-top: calc(4px * var(--k)); color: #828a98; }
+  .screen .clk .nx { justify-content: flex-start; gap: 8px; color: #e8eaee; white-space: nowrap; overflow: hidden; }
+  .screen .scene { height: calc(120px * var(--k)); position: relative; overflow: hidden; border-top: 1px solid #2c323e; }
+  .sc-aquarium { background: linear-gradient(#0b3a5c, #062338); }
+  .sc-aquarium u { position: absolute; left: 0; right: 0; bottom: 0; height: 14%; background: #c2a46b; }
+  .sc-aquarium i { position: absolute; font-style: normal; font-size: 1.6em; animation: swim 9s linear infinite; }
+  .sc-aquarium i:nth-child(1) { top: 20%; } .sc-aquarium i:nth-child(2) { top: 45%; animation-duration: 13s; animation-delay: -4s; } .sc-aquarium i:nth-child(3) { top: 62%; animation-duration: 17s; animation-delay: -9s; }
+  .sc-aquarium b { position: absolute; bottom: 10%; color: #9fd4ff; animation: bubble 4s linear infinite; left: 30%; } .sc-aquarium b + b { left: 72%; animation-delay: -2s; }
+  @keyframes swim { from { left: -10%; } to { left: 105%; } }
+  @keyframes bubble { from { bottom: 10%; opacity: 1; } to { bottom: 100%; opacity: 0; } }
+  .sc-stars { background: #05070d; }
+  .sc-stars s { position: absolute; width: 2px; height: 2px; background: #fff; animation: tw 2s ease-in-out infinite alternate; }
+  .sc-stars em { position: absolute; right: 12%; top: 12%; color: #e8e2c0; font-style: normal; font-size: 2em; }
+  @keyframes tw { from { opacity: .2; } to { opacity: 1; } }
+  .sc-matrix { background: #010a03; }
+  .sc-matrix p { position: absolute; top: -100%; margin: 0; color: #2bd96b; font-size: .9em; line-height: 1.05; animation: fall 3s linear infinite; text-shadow: 0 0 4px #2bd96b; }
+  @keyframes fall { to { top: 100%; } }
+  .sc-fire { background: linear-gradient(to top, #fff3b0 0%, #ffb02e 18%, #e2481c 40%, #5a0d06 70%, #0c0e12 100%); animation: flick .25s steps(2) infinite alternate; }
+  @keyframes flick { to { filter: brightness(1.15) saturate(1.2); } }
+  .sc-none { background: #0c0e12; }
+  .scr .opts { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; font-size: 12px; }
+  .scr .opts select { padding: 5px 6px; }
+  @media (max-width: 640px) {
+    main { padding: 12px; }
+    .screen { --k: 1; }
+    .screen.mini { --k: .8; }
+    .screens { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -175,6 +209,8 @@ let draft = null, dirty = false;   // copia editavel das telas
 
 const WIDGETS_HALF = { sys: "Sistema do PC", w: "Tempo", fx: "Cotacoes", none: "(vazio)" };
 const WIDGETS_BOTTOM = { ev: "Agenda", none: "(vazio)" };
+const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa" };
+const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", none: "Sem animacao" };
 
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -228,7 +264,32 @@ function widget(kind, p) {
   }
   return "";
 }
+function renderClock(el, p, live) {
+  const stale = live && !(S.device.at && S.now - S.device.at < 5);
+  const w = p.w || { ok: 0 }, ev = p.ev || { l: [] };
+  const sec = p.lay.sec ? `<span class="ss">${String(new Date().getSeconds()).padStart(2, "0")}</span>` : "";
+  const next = ev.l && ev.l.length ? `<span style="color:var(--blue)">${esc(ev.l[0][0])}</span> ${esc(ev.l[0][1])}` : esc(ev.msg || "sem compromissos");
+  const top = `${stale ? '<span class="dot bad" style="position:absolute;top:8px;left:8px"></span>' : ""}
+      <div class="hh">${esc(p.t)}${sec}</div>
+      <div class="info"><span>${esc(p.d)}</span><span>${w.ok ? `${ICON[w.ic] || ""} ${w.tc}°C` : ""}</span></div>
+      <div class="info nx">${next}</div>`;
+  // Mesma animacao ja na tela: troca so a parte de cima, para a animacao nao reiniciar.
+  const scene = el.querySelector(".scene");
+  if (scene && scene.dataset.sc === p.lay.sc && el.querySelector(".clk")) {
+    el.querySelector(".clk").innerHTML = top;
+    return;
+  }
+  el.innerHTML = `<div class="clk">${top}</div><div class="scene sc-${esc(p.lay.sc)}" data-sc="${esc(p.lay.sc)}">${sceneHtml(p.lay.sc)}</div>`;
+}
+function sceneHtml(sc) {
+  if (sc === "aquarium") return "<i>🐟</i><i>🐠</i><i>🐡</i><b>°</b><b>°</b><u></u>";
+  if (sc === "stars") return Array.from({ length: 24 }, (_, i) => `<s style="left:${(i * 37) % 100}%;top:${(i * 53) % 90}%;animation-delay:${(i % 7) * .3}s"></s>`).join("") + "<em>☾</em>";
+  if (sc === "matrix") return Array.from({ length: 14 }, (_, i) => `<p style="left:${i * 7.2}%;animation-delay:${(i * 0.37) % 2}s">${"01アイウ7Zｱｶ".split("").sort(() => i % 2 - .5).join("<br>")}</p>`).join("");
+  if (sc === "fire") return "";
+  return "";
+}
 function renderScreen(el, p, live) {
+  if (p.lay.f === "clock") return renderClock(el, p, live);
   const stale = live && !(S.device.at && S.now - S.device.at < 5);
   const ev = p.ev;
   el.innerHTML = `
@@ -251,35 +312,54 @@ function slug(name) {
   while (draft.some((s) => s.id === id)) id = `${base}-${i++}`;
   return id;
 }
+let lastScreensJson = "";
 function renderScreens() {
   const c = S.config, d = c.display;
-  if (!dirty) draft = JSON.parse(JSON.stringify(c.screens));
+  if (!dirty) {
+    // So reconstroi os cartoes quando as telas salvas mudaram (senao a edicao/animacao reiniciaria a cada 2 s)
+    const j = JSON.stringify(c.screens);
+    if (j !== lastScreensJson) { lastScreensJson = j; draft = JSON.parse(j); $("screens").innerHTML = ""; }
+  }
   document.querySelectorAll("input[name=mode]").forEach((r) => (r.checked = r.value === d.mode));
   $("mode-auto").style.display = d.mode === "auto" ? "" : "none";
   $("mode-manual").style.display = d.mode === "manual" ? "" : "none";
   $("pc-timeout").textContent = c.pc_timeout;
   if (!dirty) {
-    $("pc-on").innerHTML = screenOptions(d.pc_on);
-    $("pc-off").innerHTML = screenOptions(d.pc_off);
-    $("manual").innerHTML = screenOptions(d.manual);
+    // So recria as opcoes quando mudaram, e nunca com a lista aberta/focada:
+    // recriar a cada 2 s fechava o seletor no meio da escolha.
+    for (const [id, sel] of [["pc-on", d.pc_on], ["pc-off", d.pc_off], ["manual", d.manual]]) {
+      const el = $(id), html = screenOptions(sel);
+      if (document.activeElement !== el && el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+    }
   }
   const box = $("screens");
-  if (!dirty || !box.children.length) {
+  if (!box.children.length) {
     box.innerHTML = draft.map((s, i) => `
       <div class="scr" data-i="${i}">
         <div class="top"><input value="${esc(s.name)}" data-f="name" maxlength="24"><span class="badge" data-badge style="display:none">na tela</span>
           <button class="ghost" data-del title="Apagar">✕</button></div>
+        <div class="opts"><span class="muted">Tipo</span><select data-f="kind" data-rebuild>${opts(KINDS, s.kind || "grid")}</select></div>
+        ${(s.kind || "grid") === "clock" ? `
+        <div class="opts">
+          <span class="muted">Animacao</span><select data-f="scene">${opts(SCENES, s.scene || "aquarium")}</select>
+          <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="seconds" ${s.seconds !== false ? "checked" : ""}> segundos</label>
+        </div>` : `
         <div class="slots">
           <div><label>Esquerda</label><select data-f="left">${opts(WIDGETS_HALF, s.left)}</select></div>
           <div><label>Direita</label><select data-f="right">${opts(WIDGETS_HALF, s.right)}</select></div>
           <div><label>Embaixo</label><select data-f="bottom">${opts(WIDGETS_BOTTOM, s.bottom)}</select></div>
-        </div>
+        </div>`}
         <div class="screen-wrap"><div class="screen mini" data-prev></div></div>
       </div>`).join("");
     box.querySelectorAll(".scr").forEach((el) => {
       const i = +el.dataset.i;
       el.querySelectorAll("[data-f]").forEach((inp) => {
-        inp.oninput = () => { draft[i][inp.dataset.f] = inp.value; markDirty(); paintPreviews(); };
+        inp.oninput = () => {
+          draft[i][inp.dataset.f] = inp.type === "checkbox" ? inp.checked : inp.value;
+          markDirty();
+          // trocar o tipo muda os campos do cartao: redesenha
+          if ("rebuild" in inp.dataset) { box.innerHTML = ""; renderScreens(); } else paintPreviews();
+        };
       });
       el.querySelector("[data-del]").onclick = () => {
         if (draft.length === 1) return toast("Precisa existir pelo menos uma tela");
@@ -297,7 +377,7 @@ function paintPreviews() {
     const base = Object.values(S.payloads)[0];
     const p = { ...base, sys: S.pc.online ? S.sys : null, w: S.payloads[Object.keys(S.payloads).find((k) => S.payloads[k].w)]?.w || { ok: 0, city: "" },
       fx: Object.values(S.payloads).find((x) => x.fx)?.fx || fxLocal(), ev: Object.values(S.payloads).find((x) => x.ev)?.ev || { st: "off", l: [] },
-      lay: { l: s.left, r: s.right, b: s.bottom } };
+      lay: s.kind === "clock" ? { f: "clock", sc: s.scene || "aquarium", sec: s.seconds !== false ? 1 : 0 } : { l: s.left, r: s.right, b: s.bottom } };
     renderScreen(el.querySelector("[data-prev]"), p, false);
     el.classList.toggle("active", s.id === S.active);
     el.querySelector("[data-badge]").style.display = s.id === S.active ? "" : "none";
@@ -314,7 +394,7 @@ function fmtBRL(v) {
 }
 $("scr-add").onclick = () => {
   const name = prompt("Nome da nova tela:", "Nova tela"); if (!name) return;
-  draft.push({ id: slug(name), name, left: "w", right: "fx", bottom: "ev" });
+  draft.push({ id: slug(name), name, kind: "grid", left: "w", right: "fx", bottom: "ev", scene: "aquarium", seconds: true });
   markDirty(); $("screens").innerHTML = ""; renderScreens();
 };
 $("scr-save").onclick = async () => {

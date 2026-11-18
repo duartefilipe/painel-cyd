@@ -37,6 +37,18 @@ Cada tela define o widget de cada região:
 | `left`, `right` | 160×124 | `sys` (Sistema), `w` (Tempo), `fx` (Cotações), `none` |
 | `bottom` | 320×88 | `ev` (Agenda), `none` |
 
+Além do tipo `grid` (as três regiões acima), uma tela pode ser `kind: "clock"`, um
+**relógio de mesa** em tela cheia:
+
+- metade de cima: hora grande (com segundos opcionais), data, tempo e próximo compromisso;
+- metade de baixo: animação em pixel art (`scene`): `aquarium`, `stars` (céu com
+  cidade), `matrix`, `fire` ou `none`.
+
+A animação roda na placa (~30 quadros/s), num sprite de 8 bits (38 KB) que só existe
+enquanto o relógio está na tela. O relógio anda sozinho a partir do campo `ep` (segundos
+locais desde 1970). Por isso, nesse modo a placa pede dados só a cada 4 s: cada pedido
+HTTP congela a animação por alguns milissegundos.
+
 `display.mode`:
 
 - `auto`: o PC está **conectado** se o agente mandou métricas nos últimos `pc_timeout`
@@ -95,7 +107,8 @@ Só vêm os blocos que a tela ativa usa. `sys` só vem com o PC conectado.
 | `t`, `d` | hora e data já formatadas |
 | `pc` | 1 se o agente está enviando (o ponto do cabeçalho fica verde; azul se não) |
 | `cfg` | brilho (0-255), inverter cores (0/1), rotação (1 ou 3) |
-| `lay` | nome da tela e widget de cada região |
+| `ep` | horário local em segundos desde 1970 (a placa conta os segundos a partir dele) |
+| `lay` | nome da tela e widget de cada região; no relógio: `{"n", "f": "clock", "sc": cena, "sec": 0/1}` |
 | `w.ic` | `S` sol, `P` parcialmente nublado, `C` nublado, `F` neblina, `R` chuva, `T` trovoada, `N` neve |
 | `fx.l` | até 4 `[rótulo, valor em R$ já formatado, variação % do dia]` |
 | `ev.st` | `ok`, `off` (Google não conectado) ou `err` (detalhe em `ev.msg`) |
@@ -114,6 +127,13 @@ desenhar tudo no pedido seguinte.
   Wi-Fi", "servidor fora do ar", "token recusado") e os últimos dados continuam na tela.
 - **Texto sem acento:** as fontes embutidas da TFT_eSPI só têm ASCII. O servidor
   translitera antes de enviar.
+- **Atualização pelo Wi-Fi (OTA):** `ArduinoOTA`, com hostname `cyd-painel` e senha =
+  `PAINEL_TOKEN` gravado na placa (sem token, o OTA fica desligado). A tabela de partições
+  é `min_spiffs.csv`: duas partições de app de 1,9 MB, e a NVS no mesmo endereço da
+  tabela padrão.
+- **Animações** (`scenes.cpp`): cada cena tem `begin` (estado inicial) e `frame`
+  (desenha um quadro). Para criar uma nova, acrescente um caso em `sceneBegin`/`sceneFrame`,
+  o nome em `SCENES` (`app.py`) e uma prévia em `sceneHtml` (`web/index.html`).
 
 ## Acrescentar um widget
 

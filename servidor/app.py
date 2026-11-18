@@ -47,6 +47,8 @@ QUOTES_EVERY = 300      # 5 min
 
 SLOT_HALF = {"sys", "w", "fx", "none"}
 SLOT_BOTTOM = {"ev", "none"}
+KINDS = {"grid", "clock"}            # grid = 3 regioes; clock = relogio de mesa em tela cheia
+SCENES = {"aquarium", "stars", "matrix", "fire", "none"}   # animacao na metade de baixo do relogio
 
 state = {
     "sys": None, "sys_at": None, "agent": None,
@@ -151,7 +153,7 @@ def find_screen(cfg: dict, sid: str) -> dict:
     for s in cfg["screens"]:
         if s["id"] == sid:
             return s
-    return cfg["screens"][0] if cfg["screens"] else {"id": "-", "name": "-", "left": "none", "right": "none", "bottom": "none"}
+    return cfg["screens"][0] if cfg["screens"] else {"id": "-", "name": "-", "kind": "grid", "left": "none", "right": "none", "bottom": "none"}
 
 
 def active_screen(cfg: dict) -> dict:
@@ -176,16 +178,25 @@ def build_payload(screen: dict | None = None) -> dict:
     scr = screen or active_screen(cfg)
     now = datetime.now(TZ)
     online = pc_online(cfg)
-    slots = {scr.get("left"), scr.get("right"), scr.get("bottom")}
+    clock = scr.get("kind") == "clock"
+    # O relogio mostra tempo e proximo compromisso numa linha cada.
+    slots = {"w", "ev"} if clock else {scr.get("left"), scr.get("right"), scr.get("bottom")}
     with lock:
         w, evs, st, err, sysm = state["weather"], list(state["events"]), state["cal_status"], state["cal_err"], state["sys"]
 
+    if clock:
+        lay = {"n": ascii_text(scr["name"], 14), "f": "clock",
+               "sc": scr.get("scene", "aquarium"), "sec": 1 if scr.get("seconds", True) else 0}
+    else:
+        lay = {"n": ascii_text(scr["name"], 14), "l": scr.get("left", "none"),
+               "r": scr.get("right", "none"), "b": scr.get("bottom", "none")}
     p = {
         "t": now.strftime("%H:%M"),
         "d": f"{DIAS[now.weekday()]}, {now.day:02d} {MESES[now.month - 1]}",
+        # segundos desde 1970 no horario LOCAL: a placa conta os segundos sozinha a partir daqui
+        "ep": int(now.timestamp() + now.utcoffset().total_seconds()),
         "cfg": {"br": int(cfg["brightness"]), "inv": int(cfg["invert"]), "rot": int(cfg["rotation"])},
-        "lay": {"n": ascii_text(scr["name"], 14), "l": scr.get("left", "none"),
-                "r": scr.get("right", "none"), "b": scr.get("bottom", "none")},
+        "lay": lay,
         "pc": 1 if online else 0,
     }
     if "sys" in slots and online and sysm:
@@ -229,9 +240,12 @@ def clean_screens(screens) -> list:
         out.append({
             "id": sid,
             "name": str(s.get("name") or sid)[:24],
+            "kind": s.get("kind") if s.get("kind") in KINDS else "grid",
             "left": s.get("left") if s.get("left") in SLOT_HALF else "none",
             "right": s.get("right") if s.get("right") in SLOT_HALF else "none",
             "bottom": s.get("bottom") if s.get("bottom") in SLOT_BOTTOM else "none",
+            "scene": s.get("scene") if s.get("scene") in SCENES else "aquarium",
+            "seconds": bool(s.get("seconds", True)),
         })
     if not out:
         raise ValueError("Precisa existir pelo menos uma tela")

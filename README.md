@@ -17,6 +17,13 @@ como exibir:
 - **Automático:** PC conectado → tela X (ex.: "Trabalho"); PC desconectado → tela Y (ex.: "Anakin")
 - **Manual:** sempre a tela escolhida
 
+Uma tela também pode ser um **relógio de mesa**: hora grande, data, tempo, próximo
+compromisso e, embaixo, uma animação em pixel art (aquário, céu estrelado, chuva Matrix
+ou fogo).
+
+Depois da primeira gravação pelo USB, o firmware pode ser atualizado **pelo Wi-Fi**
+([OTA](docs/instalacao.md#atualizar-o-firmware-pelo-wi-fi-ota)).
+
 ```
  PC (Windows/Linux)              Servidor (Docker, sempre ligado)              CYD
 ┌──────────────────┐  POST 1/s  ┌──────────────────────────────────┐  GET 1/s  ┌────────────┐

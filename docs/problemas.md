@@ -15,6 +15,9 @@ O cabeçalho da placa fica vermelho e mostra o motivo quando passa 5 s sem dados
 | Stack não sobe: **"defina PAINEL_TOKEN"** | variável não criada na stack | Portainer → stack → **Environment variables** |
 | Redeploy: **"pull access denied for painel-cyd"** | compose antigo com `image:`; o Portainer tentou baixar a imagem do Docker Hub | atualize a stack para a versão atual do `docker-compose.yml` (`pull_policy: build`); enquanto isso, desligue **Re-pull image** no redeploy |
 | Stack não sobe: erro ao clonar | repositório privado sem autenticação | ligue **Authentication** na stack com um token do GitHub de leitura |
+| Relógio sem animação (metade de baixo preta) | faltou memória para o sprite da animação | veja `sem memoria para a animacao` no monitor serial; escolha **Sem animacao** ou reinicie a placa |
+| `pio run -e cyd-ota` falha com **"Authentication Failed"** | `PAINEL_TOKEN` do ambiente diferente do gravado na placa | use o mesmo token configurado no portal da placa |
+| `pio run -e cyd-ota` falha com **"No response from device"** | placa ainda com firmware sem OTA, IP errado, ou firewall do Windows bloqueando a resposta | primeira gravação pelo USB; confira o IP no card Placa; libere o Python no firewall |
 | Cores em **negativo** (fundo claro) | lote da CYD com painel invertido | marque **inverter** no card Placa |
 | Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` ([instalacao.md](instalacao.md#hardware)) |
 | Google: **"Erro 403: access_denied"** no login | app em "Testando" e o seu e-mail não está em Usuários de teste | adicione o e-mail ([google-agenda.md](google-agenda.md#2-tela-de-consentimento)) |
