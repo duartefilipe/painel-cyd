@@ -3,3 +3,6 @@ data/
 firmware/.pio/
 __pycache__/
 .venv/
+# agente do PC: token e log ficam fora do git
+agente/agente.json
+agente/agente.log

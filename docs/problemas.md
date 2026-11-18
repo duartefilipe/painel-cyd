@@ -1,35 +1,34 @@
 # Problemas comuns
 
+O cabeçalho da placa fica vermelho e mostra o motivo quando passa 5 s sem dados novos.
+
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| Tela **"aguardando o PC..."** e não sai disso | o programa do PC não está rodando, ou está numa porta errada | rode `iniciar.bat`; no painel, card **Placa**, confira a porta |
-| Tela **"sem dados do PC"** (já mostrou dados antes) | o programa do PC caiu, ou a porta foi liberada | veja `data/painel.log`; clique em **Retomar** se estiver pausado |
-| Painel diz **"porta aberta, mas a placa não respondeu"** | a placa está com outro firmware | grave o firmware (`pio run -t upload`) |
-| Painel diz **"Nenhuma CYD encontrada no USB"** | cabo só de carga, driver ausente, ou conversor não reconhecido | troque o cabo; instale o driver CH340; escolha a porta manualmente |
-| `pio run -t upload` falha com **"could not open port"** / **"Access denied"** | o programa do PC está segurando a porta | **Liberar porta** no painel, gravar, **Retomar** |
-| Linux: **`Permission denied: '/dev/ttyUSB0'`** | usuário fora do grupo `dialout` (`uucp` no Arch) | `sudo usermod -aG dialout $USER`, sair e entrar na sessão ([linux.md](linux.md#permissão-na-porta-serial)) |
-| Linux: a placa conecta e **a `/dev/ttyUSB0` some** | `brltty` sequestrou o CH340 (Ubuntu 22.04+) | `sudo apt remove brltty` e reconectar ([linux.md](linux.md#brltty-sequestra-a-placa-ubuntu-2204)) |
-| Linux: `instalar-linux.sh` diz **`bash\r`: No such file** | script salvo com fim de linha do Windows | `sed -i 's/\r$//' *.sh` (o `.gitattributes` evita isso num clone novo) |
+| Placa: **"sem Wi-Fi"** | rede fora do ar, senha trocada ou rede só 5 GHz | a placa reconecta sozinha; se a senha mudou, segure **BOOT** ao ligar e reconfigure |
+| Placa: **"servidor fora do ar"** | container parado, IP do servidor mudou, ou porta 8765 bloqueada | veja a stack no Portainer; fixe o IP do servidor no DHCP; reconfigure o endereço (BOOT ao ligar) |
+| Placa: **"token recusado"** | `PAINEL_TOKEN` da placa diferente do da stack | reconfigure a placa (BOOT ao ligar) |
+| Placa: **"endereco invalido"** | servidor digitado sem `http://` | informe `http://IP:8765` no portal |
+| Placa fica em **"Configurar"** | sem Wi-Fi salvo, ou a conexão falhou | conecte na rede `CYD-Painel` com a senha da tela; depois de 5 min sem configurar ela reinicia e tenta de novo |
+| Tela **Sistema** diz **"PC desconectado"** com o PC ligado | agente parado, token errado no `agente.json`, ou firewall | veja `agente/agente.log`; o card **Placa** do painel mostra quando o PC enviou por último |
+| Modo automático não troca de tela | o agente ainda está enviando, ou o tempo-limite ainda não passou | a troca acontece `pc_timeout` segundos (padrão 10) depois do último envio |
+| Navegador pede senha em loop | senha diferente do `PAINEL_TOKEN` | usuário qualquer, senha = token da stack |
+| Stack não sobe: **"defina PAINEL_TOKEN"** | variável não criada na stack | Portainer → stack → **Environment variables** |
+| Stack não sobe: erro ao clonar | repositório privado sem autenticação | ligue **Authentication** na stack com um token do GitHub de leitura |
 | Cores em **negativo** (fundo claro) | lote da CYD com painel invertido | marque **inverter** no card Placa |
-| Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` (ver [instalacao.md](instalacao.md#hardware)) |
+| Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` ([instalacao.md](instalacao.md#hardware)) |
 | Google: **"Erro 403: access_denied"** no login | app em "Testando" e o seu e-mail não está em Usuários de teste | adicione o e-mail ([google-agenda.md](google-agenda.md#2-tela-de-consentimento)) |
-| Agenda: **"Reconecte o Google"** | token venceu (app em modo "Testando" vence em 7 dias) ou foi revogado | **Reconectar** no painel |
-| Agenda vazia, mas há eventos | a agenda do evento não está marcada, ou o evento passa de 7 dias | marque a agenda no card Google Agenda |
+| Google: depois do login, **página não abre** em `localhost` | esperado: o servidor está em outra máquina | copie o endereço da barra e cole no painel ([google-agenda.md](google-agenda.md#4-conectar-pelo-painel)) |
+| Agenda: **"Reconecte o Google"** | token venceu (app em "Testando" vence em 7 dias) ou foi revogado | refaça o login pelo painel |
+| Cotações: **"sem cotacoes"** | AwesomeAPI fora, ou sem internet no servidor | tenta de novo em 5 min; o erro aparece no card Cotações |
 | Título aparece **sem acento** | proposital: a fonte da placa só tem ASCII | — |
-| Previsão: **"sem previsao"** | sem internet, ou Open-Meteo fora | o painel mostra o erro no card Tempo; tenta de novo em 10 min |
-| `http://localhost:8765` não abre | programa parado, ou porta 8765 ocupada | rode `python pc/app.py` num terminal para ver o erro; a porta muda em `data/config.json` (`web_port`) |
 
 ## Ver o que a placa recebe
 
-Com o programa do PC **parado** (ou a porta liberada):
+A placa só faz `GET /api/screen`. O mesmo pedido, de qualquer máquina da rede:
 
-```bash
-cd firmware
-pio device monitor
+```powershell
+curl.exe -H "Authorization: Bearer SEU_TOKEN" http://IP-DO-SERVIDOR:8765/api/screen
 ```
 
-Ao reiniciar, a placa imprime `CYD-PAINEL READY`. Para testar a tela sem o programa do PC,
-cole uma linha do [protocolo](arquitetura.md#protocolo-da-serial) no monitor e tecle Enter.
-
-A mensagem que está sendo enviada agora também aparece em `GET /api/state`, no campo
-`payload`.
+O monitor serial (`pio device monitor`) mostra o IP da placa e erros de JSON. Os logs do
+servidor ficam no Portainer (**Containers → painel-cyd → Logs**) e em `/data/painel.log`.

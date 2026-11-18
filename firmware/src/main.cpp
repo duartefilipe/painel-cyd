@@ -1,23 +1,30 @@
-// Painel CYD — a placa so desenha. Quem busca os dados e o programa do PC
-// (pasta pc/), que manda uma linha de JSON por segundo pela serial USB.
+// Painel CYD - a placa so desenha. Quem busca os dados e o servidor (Docker no
+// Portainer). A placa entra no Wi-Fi e pede GET /api/screen a cada segundo.
 //
-// Formato da linha (chaves curtas para caber folgado no buffer):
-// {"t":"14:32","d":"qui, 05 nov",
+// Resposta (chaves curtas):
+// {"t":"14:32","d":"qui, 05 nov","pc":1,
 //  "cfg":{"br":200,"inv":0,"rot":1},
+//  "lay":{"n":"Trabalho","l":"sys","r":"w","b":"ev"},     <- o que vai em cada regiao
 //  "sys":{"cpu":23.5,"ram":61.2,"ru":10.1,"rt":31.9,"dsk":72,"dn":123.4,"up":12.3},
-//  "w":{"ok":1,"city":"Santa Maria","tc":24,"ic":"P","day":1,"mn":17,"mx":29,
-//       "h":[["15h",25,"P"],...]},
+//  "w":{"ok":1,"city":"Santa Maria","tc":24,"ic":"P","day":1,"mn":17,"mx":29,"h":[["15h",25,"P"],...]},
+//  "fx":{"ok":1,"at":"14:30","l":[["USD","5,83",0.95],...]},
 //  "ev":{"st":"ok","msg":"","l":[["14:00","Reuniao",1],...]}}
+// So vem os blocos que a tela atual usa. Texto chega sem acento (fonte ASCII).
 //
-// Texto chega sem acento: as fontes embutidas da TFT_eSPI so tem ASCII, e o PC
-// translitera antes de mandar ("Reuniao" em vez de "Reunião").
+// Primeira vez (ou BOOT segurado ao ligar): a placa abre a rede "CYD-Painel" com
+// a senha mostrada na tela. Conecte pelo celular e informe Wi-Fi, servidor e token.
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include <Preferences.h>
+#include <TFT_eSPI.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
 
 TFT_eSPI tft;
 TFT_eSprite spr(&tft);
+Preferences prefs;
 
 // ---------- cores (tokens) ----------
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
@@ -43,17 +50,24 @@ constexpr int W = 320;
 constexpr int H_HEADER = 28;
 constexpr int Y_MID = H_HEADER;
 constexpr int H_MID = 124;
+constexpr int HALF = 160;
 constexpr int Y_AGENDA = Y_MID + H_MID;
 constexpr int H_AGENDA = 240 - Y_AGENDA;
 constexpr unsigned long STALE_MS = 5000;
+constexpr unsigned long POLL_MS = 1000;
+constexpr int PIN_BOOT = 0;
 
 // ---------- estado ----------
 struct Hour { char lbl[6]; int temp; char ic; };
 struct Ev { char when[18]; char title[48]; bool now; };
+struct Fx { char lbl[5]; char val[14]; float ch; };
 
 struct State {
   char hora[6] = "--:--";
   char data[24] = "";
+  char layN[16] = "";
+  char layL[5] = "none", layR[5] = "none", layB[5] = "none";
+  bool pc = false;
   bool hasSys = false;
   float cpu = 0, ram = 0, ru = 0, rt = 0, dsk = 0, dn = 0, up = 0;
   bool wOk = false;
@@ -63,6 +77,11 @@ struct State {
   bool day = true;
   Hour h[4];
   int nh = 0;
+  bool fxOk = false;
+  char fxAt[6] = "";
+  char fxMsg[32] = "";
+  Fx fx[4];
+  int nfx = 0;
   char evSt[6] = "off";
   char evMsg[40] = "";
   Ev ev[4];
@@ -74,12 +93,13 @@ uint8_t cpuHist[HIST_N];
 int histCount = 0;
 
 int cfgBr = 200, cfgInv = 0, cfgRot = 1;
-unsigned long lastMsg = 0;
+unsigned long lastMsg = 0, lastPoll = 0;
 bool everGot = false;
 bool wasStale = true;
 
-char line[3072];
-size_t lineLen = 0;
+char srvUrl[96] = "http://192.168.31.229:8765";
+char srvToken[72] = "";
+char linkErr[32] = "";  // motivo de estar sem dados, para o cabecalho
 
 // ---------- utilidades de desenho ----------
 uint16_t semaforo(float pct) {
@@ -115,7 +135,6 @@ void fmtRate(float kbps, char* out, size_t sz) {
 }
 
 // ---------- icones de tempo (primitivas, sem bitmap) ----------
-// (x,y) = canto superior esquerdo de uma caixa de 36x28 vezes k.
 void cloud(int x, int y, float k, uint16_t c) {
   spr.fillCircle(x + 12 * k, y + 17 * k, 7 * k, c);
   spr.fillCircle(x + 20 * k, y + 12 * k, 9 * k, c);
@@ -189,11 +208,16 @@ void drawHeader() {
   if (stale) {
     spr.fillCircle(10, 14, 4, C_BAD);
     spr.setTextColor(C_BAD, C_BG);
-    spr.drawString(everGot ? "sem dados do PC" : "aguardando o PC...", 20, 14, 2);
+    spr.drawString(linkErr[0] ? linkErr : "conectando...", 20, 14, 2);
   } else {
-    spr.fillCircle(10, 14, 4, C_GOOD);
+    spr.fillCircle(10, 14, 4, S.pc ? C_GOOD : C_BLUE);
     spr.setTextColor(C_TEXT, C_BG);
     spr.drawString(S.data, 20, 14, 2);
+    // nome da tela, discreto, depois da data
+    if (S.layN[0]) {
+      spr.setTextColor(C_MUTED, C_BG);
+      spr.drawString(S.layN, 30 + spr.textWidth(S.data, 2), 15, 1);
+    }
   }
   spr.setTextDatum(MR_DATUM);
   spr.setTextColor(stale ? C_MUTED : C_TEXT, C_BG);
@@ -216,62 +240,55 @@ void barRow(int y, const char* label, float pct, const char* val) {
   if (fw > 0) spr.fillRoundRect(bx, by, max(fw, 4), 7, 3, semaforo(pct));
 }
 
-void drawSystem() {
-  spr.createSprite(160, H_MID);
-  spr.fillSprite(C_BG);
+// Cada widget desenha num sprite de 160x124 (coordenadas locais).
+void wSystem() {
   spr.setTextDatum(TL_DATUM);
   spr.setTextColor(C_MUTED, C_BG);
   spr.drawString("SISTEMA", 8, 4, 2);
 
   if (!S.hasSys) {
-    spr.drawString("sem dados", 8, 30, 2);
-  } else {
-    char buf[24];
-    // CPU: numero grande + historico de 72 s
-    spr.setTextDatum(TR_DATUM);
-    spr.setTextColor(C_TEXT, C_BG);
-    snprintf(buf, sizeof(buf), "CPU %.0f%%", S.cpu);
-    spr.drawString(buf, 152, 4, 2);
-
-    const int gx = 8, gy = 24, gw = 144, gh = 34;
-    spr.fillRect(gx, gy, gw, gh, C_TRACK);
-    int start = HIST_N - histCount;
-    for (int i = 0; i < histCount; i++) {
-      int v = cpuHist[i];
-      int hpx = max(1, v * gh / 100);
-      int x = gx + (start + i) * 2;
-      spr.fillRect(x, gy + gh - hpx, 2, hpx, C_ACCENT_DIM);
-      spr.drawFastHLine(x, gy + gh - hpx, 2, C_ACCENT);
-    }
-
-    snprintf(buf, sizeof(buf), "%.0f%%", S.ram);
-    barRow(64, "RAM", S.ram, buf);
-    spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(C_MUTED, C_BG);
-    snprintf(buf, sizeof(buf), "%.1f / %.0f GB", S.ru, S.rt);
-    spr.drawString(buf, 50, 80, 1);
-
-    snprintf(buf, sizeof(buf), "%.0f%%", S.dsk);
-    barRow(88, "DISCO", S.dsk, buf);
-
-    char r[16];
-    arrow(8, 104, true, C_GOOD);
-    fmtRate(S.dn, r, sizeof(r));
-    spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString(r, 19, 105, 1);
-    arrow(84, 104, false, C_BLUE);
-    fmtRate(S.up, r, sizeof(r));
-    spr.drawString(r, 95, 105, 1);
+    spr.drawString("PC desconectado", 8, 30, 2);
+    return;
   }
-  spr.pushSprite(0, Y_MID);
-  spr.deleteSprite();
+  char buf[24];
+  spr.setTextDatum(TR_DATUM);
+  spr.setTextColor(C_TEXT, C_BG);
+  snprintf(buf, sizeof(buf), "CPU %.0f%%", S.cpu);
+  spr.drawString(buf, 152, 4, 2);
+
+  const int gx = 8, gy = 24, gw = 144, gh = 34;
+  spr.fillRect(gx, gy, gw, gh, C_TRACK);
+  int start = HIST_N - histCount;
+  for (int i = 0; i < histCount; i++) {
+    int v = cpuHist[i];
+    int hpx = max(1, v * gh / 100);
+    int x = gx + (start + i) * 2;
+    spr.fillRect(x, gy + gh - hpx, 2, hpx, C_ACCENT_DIM);
+    spr.drawFastHLine(x, gy + gh - hpx, 2, C_ACCENT);
+  }
+
+  snprintf(buf, sizeof(buf), "%.0f%%", S.ram);
+  barRow(64, "RAM", S.ram, buf);
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(C_MUTED, C_BG);
+  snprintf(buf, sizeof(buf), "%.1f / %.0f GB", S.ru, S.rt);
+  spr.drawString(buf, 50, 80, 1);
+
+  snprintf(buf, sizeof(buf), "%.0f%%", S.dsk);
+  barRow(88, "DISCO", S.dsk, buf);
+
+  char r[16];
+  arrow(8, 104, true, C_GOOD);
+  fmtRate(S.dn, r, sizeof(r));
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(C_TEXT, C_BG);
+  spr.drawString(r, 19, 105, 1);
+  arrow(84, 104, false, C_BLUE);
+  fmtRate(S.up, r, sizeof(r));
+  spr.drawString(r, 95, 105, 1);
 }
 
-void drawWeather() {
-  spr.createSprite(160, H_MID);
-  spr.fillSprite(C_BG);
-  spr.drawFastVLine(0, 6, H_MID - 12, C_LINE);
+void wWeather() {
   spr.setTextDatum(TL_DATUM);
   spr.setTextColor(C_MUTED, C_BG);
   char city[28];
@@ -280,34 +297,77 @@ void drawWeather() {
 
   if (!S.wOk) {
     spr.drawString("sem previsao", 10, 30, 2);
-  } else {
-    weatherIcon(10, 26, 1.1f, S.ic, S.day);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", S.tc);
-    spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString(buf, 62, 24, 4);
-    int tw = spr.textWidth(buf, 4);
-    degree(62 + tw + 4, 28, 3, C_TEXT);
-    spr.drawString("C", 62 + tw + 10, 24, 4);
-
-    spr.setTextColor(C_MUTED, C_BG);
-    snprintf(buf, sizeof(buf), "%d / %d", S.mn, S.mx);
-    spr.drawString(buf, 62, 52, 2);
-    degree(62 + spr.textWidth(buf, 2) + 4, 56, 2, C_MUTED);
-
-    for (int i = 0; i < S.nh; i++) {
-      int cx = 10 + i * 37 + 17;
-      spr.setTextDatum(TC_DATUM);
-      spr.setTextColor(C_MUTED, C_BG);
-      spr.drawString(S.h[i].lbl, cx, 74, 2);
-      weatherIcon(cx - 10, 92, 0.55f, S.h[i].ic, true);
-      spr.setTextColor(C_TEXT, C_BG);
-      snprintf(buf, sizeof(buf), "%d", S.h[i].temp);
-      spr.drawString(buf, cx - 2, 108, 2);
-      degree(cx - 2 + spr.textWidth(buf, 2) / 2 + 3, 111, 1, C_TEXT);
-    }
+    return;
   }
-  spr.pushSprite(160, Y_MID);
+  weatherIcon(10, 26, 1.1f, S.ic, S.day);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d", S.tc);
+  spr.setTextColor(C_TEXT, C_BG);
+  spr.drawString(buf, 62, 24, 4);
+  int tw = spr.textWidth(buf, 4);
+  degree(62 + tw + 4, 28, 3, C_TEXT);
+  spr.drawString("C", 62 + tw + 10, 24, 4);
+
+  spr.setTextColor(C_MUTED, C_BG);
+  snprintf(buf, sizeof(buf), "%d / %d", S.mn, S.mx);
+  spr.drawString(buf, 62, 52, 2);
+  degree(62 + spr.textWidth(buf, 2) + 4, 56, 2, C_MUTED);
+
+  for (int i = 0; i < S.nh; i++) {
+    int cx = 10 + i * 37 + 17;
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextColor(C_MUTED, C_BG);
+    spr.drawString(S.h[i].lbl, cx, 74, 2);
+    weatherIcon(cx - 10, 92, 0.55f, S.h[i].ic, true);
+    spr.setTextColor(C_TEXT, C_BG);
+    snprintf(buf, sizeof(buf), "%d", S.h[i].temp);
+    spr.drawString(buf, cx - 2, 108, 2);
+    degree(cx - 2 + spr.textWidth(buf, 2) / 2 + 3, 111, 1, C_TEXT);
+  }
+}
+
+void wQuotes() {
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(C_MUTED, C_BG);
+  spr.drawString("COTACOES", 8, 4, 2);
+  if (S.fxAt[0]) {
+    spr.setTextDatum(TR_DATUM);
+    spr.drawString(S.fxAt, 152, 6, 1);
+  }
+  if (!S.fxOk) {
+    spr.setTextDatum(TL_DATUM);
+    spr.drawString(S.fxMsg[0] ? S.fxMsg : "sem cotacoes", 8, 30, 2);
+    return;
+  }
+  // Ate 4 linhas. Esquerda: rotulo e, embaixo, a variacao do dia. Direita: valor em R$.
+  int rowH = S.nfx <= 3 ? 31 : 24;
+  for (int i = 0; i < S.nfx; i++) {
+    const Fx& q = S.fx[i];
+    int y = 24 + i * rowH;
+    spr.setTextDatum(TL_DATUM);
+    spr.setTextColor(C_MUTED, C_BG);
+    spr.drawString(q.lbl, 8, y, 2);
+    char ch[12];
+    snprintf(ch, sizeof(ch), "%+.1f%%", q.ch);
+    uint16_t c = q.ch >= 0 ? C_GOOD : C_BAD;
+    spr.setTextColor(c, C_BG);
+    spr.drawString(ch, 8, y + 15, 1);
+    spr.setTextDatum(TR_DATUM);
+    spr.setTextColor(C_TEXT, C_BG);
+    char v[16];
+    fitText(q.val, v, sizeof(v), 100, 4);
+    spr.drawString(v, 152, y, 4);
+  }
+}
+
+void drawHalf(int x, const char* kind) {
+  spr.createSprite(HALF, H_MID);
+  spr.fillSprite(C_BG);
+  if (!strcmp(kind, "sys")) wSystem();
+  else if (!strcmp(kind, "w")) wWeather();
+  else if (!strcmp(kind, "fx")) wQuotes();
+  if (x > 0) spr.drawFastVLine(0, 6, H_MID - 12, C_LINE);
+  spr.pushSprite(x, Y_MID);
   spr.deleteSprite();
 }
 
@@ -315,25 +375,27 @@ void drawAgenda() {
   spr.createSprite(W, H_AGENDA);
   spr.fillSprite(C_BG);
   spr.drawFastHLine(0, 0, W, C_LINE);
-  spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
-  spr.drawString("AGENDA", 8, 4, 2);
+  if (!strcmp(S.layB, "ev")) {
+    spr.setTextDatum(TL_DATUM);
+    spr.setTextColor(C_MUTED, C_BG);
+    spr.drawString("AGENDA", 8, 4, 2);
 
-  if (strcmp(S.evSt, "ok") != 0 || S.nev == 0) {
-    const char* msg = S.evMsg[0] ? S.evMsg
-                    : (strcmp(S.evSt, "ok") == 0 ? "nada nos proximos dias" : "Google nao conectado");
-    spr.drawString(msg, 8, 24, 2);
-  } else {
-    for (int i = 0; i < S.nev; i++) {
-      int y = 22 + i * 16;
-      const Ev& e = S.ev[i];
-      if (e.now) spr.fillRect(0, y + 1, 3, 13, C_ACCENT);
-      spr.setTextColor(e.now ? C_ACCENT : C_BLUE, C_BG);
-      spr.drawString(e.when, 8, y, 2);
-      char t[52];
-      fitText(e.title, t, sizeof(t), W - 106, 2);
-      spr.setTextColor(C_TEXT, C_BG);
-      spr.drawString(t, 98, y, 2);
+    if (strcmp(S.evSt, "ok") != 0 || S.nev == 0) {
+      const char* msg = S.evMsg[0] ? S.evMsg
+                      : (strcmp(S.evSt, "ok") == 0 ? "nada nos proximos dias" : "Google nao conectado");
+      spr.drawString(msg, 8, 24, 2);
+    } else {
+      for (int i = 0; i < S.nev; i++) {
+        int y = 22 + i * 16;
+        const Ev& e = S.ev[i];
+        if (e.now) spr.fillRect(0, y + 1, 3, 13, C_ACCENT);
+        spr.setTextColor(e.now ? C_ACCENT : C_BLUE, C_BG);
+        spr.drawString(e.when, 8, y, 2);
+        char t[52];
+        fitText(e.title, t, sizeof(t), W - 106, 2);
+        spr.setTextColor(C_TEXT, C_BG);
+        spr.drawString(t, 98, y, 2);
+      }
     }
   }
   spr.pushSprite(0, Y_AGENDA);
@@ -342,12 +404,26 @@ void drawAgenda() {
 
 void drawAll() {
   drawHeader();
-  drawSystem();
-  drawWeather();
+  drawHalf(0, S.layL);
+  drawHalf(HALF, S.layR);
   drawAgenda();
 }
 
-// ---------- configuracao vinda do PC ----------
+// Tela cheia de aviso (configuracao do Wi-Fi, erros de boot).
+void drawNotice(const char* title, const char* l1, const char* l2 = "", const char* l3 = "", const char* l4 = "") {
+  tft.fillScreen(C_BG);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(C_ACCENT, C_BG);
+  tft.drawString(title, 12, 14, 4);
+  tft.drawFastHLine(12, 44, W - 24, C_LINE);
+  const char* ls[] = {l1, l2, l3, l4};
+  for (int i = 0; i < 4; i++) {
+    tft.setTextColor(i == 0 ? C_TEXT : C_MUTED, C_BG);
+    tft.drawString(ls[i], 12, 58 + i * 24, 2);
+  }
+}
+
+// ---------- configuracao vinda do servidor ----------
 void applyConfig(int br, int inv, int rot) {
   bool redraw = false;
   if (rot != cfgRot) {
@@ -367,12 +443,13 @@ void applyConfig(int br, int inv, int rot) {
 }
 
 // ---------- parse ----------
-void handleLine(char* s) {
+bool handlePayload(const String& body) {
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, s);
+  DeserializationError err = deserializeJson(doc, body);
   if (err) {
-    Serial.printf("ERR %s\n", err.c_str());
-    return;
+    Serial.printf("JSON: %s\n", err.c_str());
+    strlcpy(linkErr, "resposta invalida", sizeof(linkErr));
+    return false;
   }
 
   JsonObject cfg = doc["cfg"];
@@ -380,10 +457,17 @@ void handleLine(char* s) {
 
   strlcpy(S.hora, doc["t"] | "--:--", sizeof(S.hora));
   strlcpy(S.data, doc["d"] | "", sizeof(S.data));
+  S.pc = (doc["pc"] | 0) == 1;
+
+  JsonObject lay = doc["lay"];
+  strlcpy(S.layN, lay["n"] | "", sizeof(S.layN));
+  strlcpy(S.layL, lay["l"] | "sys", sizeof(S.layL));
+  strlcpy(S.layR, lay["r"] | "w", sizeof(S.layR));
+  strlcpy(S.layB, lay["b"] | "ev", sizeof(S.layB));
 
   JsonObject sys = doc["sys"];
-  if (!sys.isNull()) {
-    S.hasSys = true;
+  S.hasSys = !sys.isNull();
+  if (S.hasSys) {
     S.cpu = sys["cpu"] | 0.0f;
     S.ram = sys["ram"] | 0.0f;
     S.ru = sys["ru"] | 0.0f;
@@ -394,6 +478,8 @@ void handleLine(char* s) {
     if (histCount == HIST_N) memmove(cpuHist, cpuHist + 1, HIST_N - 1);
     else histCount++;
     cpuHist[histCount - 1] = (uint8_t)constrain((int)S.cpu, 0, 100);
+  } else {
+    histCount = 0;  // PC saiu: o grafico recomeca quando voltar
   }
 
   JsonObject w = doc["w"];
@@ -415,6 +501,21 @@ void handleLine(char* s) {
     }
   }
 
+  JsonObject fx = doc["fx"];
+  if (!fx.isNull()) {
+    S.fxOk = (fx["ok"] | 0) == 1;
+    strlcpy(S.fxAt, fx["at"] | "", sizeof(S.fxAt));
+    strlcpy(S.fxMsg, fx["msg"] | "", sizeof(S.fxMsg));
+    S.nfx = 0;
+    for (JsonArray it : fx["l"].as<JsonArray>()) {
+      if (S.nfx >= 4) break;
+      Fx& q = S.fx[S.nfx++];
+      strlcpy(q.lbl, it[0] | "", sizeof(q.lbl));
+      strlcpy(q.val, it[1] | "", sizeof(q.val));
+      q.ch = it[2] | 0.0f;
+    }
+  }
+
   JsonObject ev = doc["ev"];
   if (!ev.isNull()) {
     strlcpy(S.evSt, ev["st"] | "off", sizeof(S.evSt));
@@ -431,38 +532,131 @@ void handleLine(char* s) {
 
   lastMsg = millis();
   everGot = true;
+  linkErr[0] = '\0';
   drawAll();
-  Serial.println("OK");  // o PC usa isto para saber que a placa esta viva
+  return true;
+}
+
+void poll() {
+  if (WiFi.status() != WL_CONNECTED) {
+    strlcpy(linkErr, "sem Wi-Fi", sizeof(linkErr));
+    return;
+  }
+  HTTPClient http;
+  String url = String(srvUrl) + "/api/screen";
+  if (!http.begin(url)) {
+    strlcpy(linkErr, "endereco invalido", sizeof(linkErr));
+    return;
+  }
+  http.setTimeout(2500);
+  http.setConnectTimeout(2000);
+  http.addHeader("Authorization", String("Bearer ") + srvToken);
+  int code = http.GET();
+  if (code == 200) {
+    handlePayload(http.getString());
+  } else if (code == 401) {
+    strlcpy(linkErr, "token recusado", sizeof(linkErr));
+  } else if (code < 0) {
+    strlcpy(linkErr, "servidor fora do ar", sizeof(linkErr));
+  } else {
+    snprintf(linkErr, sizeof(linkErr), "servidor: HTTP %d", code);
+  }
+  http.end();
+}
+
+// ---------- Wi-Fi e configuracao ----------
+char apPass[10];
+bool saveParams = false;
+
+void onApStart(WiFiManager*) {
+  char l2[48];
+  snprintf(l2, sizeof(l2), "rede: CYD-Painel   senha: %s", apPass);
+  drawNotice("Configurar", "Conecte o celular na rede abaixo", l2,
+             "abra 192.168.4.1 e informe o Wi-Fi,", "o servidor e o PAINEL_TOKEN");
+}
+
+void setupWifi() {
+  prefs.begin("painel", false);
+  // BOOT segurado ao ligar: apaga Wi-Fi e configuracao e abre o portal.
+  pinMode(PIN_BOOT, INPUT_PULLUP);
+  bool reset = digitalRead(PIN_BOOT) == LOW;
+
+  String u = prefs.getString("url", srvUrl);
+  String t = prefs.getString("token", "");
+  strlcpy(srvUrl, u.c_str(), sizeof(srvUrl));
+  strlcpy(srvToken, t.c_str(), sizeof(srvToken));
+
+  WiFiManager wm;
+  if (reset) {
+    drawNotice("Reset", "Apagando Wi-Fi e configuracao...");
+    wm.resetSettings();
+    prefs.clear();
+    srvToken[0] = '\0';
+    delay(800);
+  }
+
+  // Senha do portal sorteada a cada boot e mostrada so na tela.
+  snprintf(apPass, sizeof(apPass), "%08lu", (unsigned long)(esp_random() % 100000000UL));
+
+  WiFiManagerParameter pUrl("url", "Servidor (http://IP:porta)", srvUrl, sizeof(srvUrl) - 1);
+  WiFiManagerParameter pTok("token", "PAINEL_TOKEN", srvToken, sizeof(srvToken) - 1);
+  wm.addParameter(&pUrl);
+  wm.addParameter(&pTok);
+  wm.setTitle("Painel CYD");
+  wm.setAPCallback(onApStart);
+  wm.setSaveParamsCallback([]() { saveParams = true; });
+  wm.setSaveConfigCallback([]() { saveParams = true; });
+  wm.setConnectTimeout(20);
+  wm.setConfigPortalTimeout(300);  // 5 min sem configurar: reinicia e tenta de novo
+
+  drawNotice("Conectando", "Entrando no Wi-Fi...", "segure BOOT ao ligar para reconfigurar");
+
+  bool ok;
+  if (reset || !srvToken[0]) ok = wm.startConfigPortal("CYD-Painel", apPass);
+  else ok = wm.autoConnect("CYD-Painel", apPass);
+
+  if (saveParams) {
+    strlcpy(srvUrl, pUrl.getValue(), sizeof(srvUrl));
+    strlcpy(srvToken, pTok.getValue(), sizeof(srvToken));
+    // tira barra final e espacos
+    size_t n = strlen(srvUrl);
+    while (n && (srvUrl[n - 1] == '/' || srvUrl[n - 1] == ' ')) srvUrl[--n] = '\0';
+    prefs.putString("url", srvUrl);
+    prefs.putString("token", srvToken);
+  }
+  if (!ok) {
+    drawNotice("Sem Wi-Fi", "Nao conectou. Reiniciando...");
+    delay(2000);
+    ESP.restart();
+  }
+  WiFi.setAutoReconnect(true);
+  Serial.printf("Wi-Fi ok, IP %s, servidor %s\n", WiFi.localIP().toString().c_str(), srvUrl);
+  tft.fillScreen(C_BG);
 }
 
 void setup() {
-  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   tft.init();
   tft.setRotation(cfgRot);
   tft.fillScreen(C_BG);
   pinMode(TFT_BL, OUTPUT);
   analogWrite(TFT_BL, cfgBr);
+  setupWifi();
   drawAll();
-  Serial.println("CYD-PAINEL READY");
 }
 
 void loop() {
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n') {
-      line[lineLen] = '\0';
-      if (lineLen > 0) handleLine(line);
-      lineLen = 0;
-    } else if (c != '\r' && lineLen < sizeof(line) - 1) {
-      line[lineLen++] = c;
-    }
+  if (millis() - lastPoll >= POLL_MS) {
+    lastPoll = millis();
+    poll();
   }
-  // Sem mensagem nova, so o cabecalho muda (indicador de "sem dados do PC").
+  // Sem resposta nova, so o cabecalho muda (indicador e motivo da falha).
+  static char shownErr[32] = "";
   bool stale = isStale();
-  if (stale != wasStale) {
+  if (stale != wasStale || (stale && strcmp(shownErr, linkErr) != 0)) {
     wasStale = stale;
+    strlcpy(shownErr, linkErr, sizeof(shownErr));
     drawHeader();
   }
-  delay(5);
+  delay(10);
 }

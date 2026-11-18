@@ -1,0 +1,8 @@
+data/
+pc/
+agente/
+firmware/
+docs/
+.git/
+**/__pycache__/
+.venv/
