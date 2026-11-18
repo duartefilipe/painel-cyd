@@ -110,6 +110,10 @@ Mode mode = M_GRID;
 char sceneName[10] = "";
 bool showSec = true;
 uint16_t clockCol = 0xFE87;
+int clockFont = 0, clockSize = 12, clockX = -1, clockY = 14;
+int dateSize = 3, dateX = 12, dateY = 88;
+int weaSize = 3, weaX = 238, weaY = 88;
+int evSize = 3, evX = 12, evY = 110;
 long epBase = 0;            // segundos locais desde 1970, vindos do servidor
 unsigned long epAt = 0;     // millis() de quando epBase chegou
 uint32_t frameNo = 0;
@@ -461,42 +465,47 @@ void clockFrame() {
   bool stale = isStale();
 
   long e = nowLocal();
-  char hm[6], sc[3];
-  snprintf(hm, sizeof(hm), "%02ld:%02ld", (e / 3600) % 24, (e / 60) % 60);
-  snprintf(sc, sizeof(sc), "%02ld", e % 60);
-  const int K = 12, KS = 5;
-  int wHM = pxWidth(hm) * K, wS = showSec ? pxWidth(sc) * KS + 8 : 0;
-  int x = (W - wHM - wS) / 2;
-  pxBig(s, hm, x, 14, K, stale ? C_MUTED : clockCol);
-  if (showSec) pxBig(s, sc, x + wHM + 8, 14, KS, C_ACCENT);
+  if (clockSize > 0) {
+    char hm[6], sc[3];
+    snprintf(hm, sizeof(hm), "%02ld:%02ld", (e / 3600) % 24, (e / 60) % 60);
+    snprintf(sc, sizeof(sc), "%02ld", e % 60);
+    int K = clockSize, KS = max(2, (K * 5 + 6) / 12), gap = max(4, K * 2 / 3);
+    int wHM = pxTextW(hm, K, clockFont), wS = showSec ? pxTextW(sc, KS, clockFont) + gap : 0;
+    int x = clockX < 0 ? (W - wHM - wS) / 2 : clockX;
+    pxBig(s, hm, x, clockY, K, stale ? C_MUTED : clockCol, 0, W, clockFont);
+    if (showSec) pxBig(s, sc, x + wHM + gap, clockY, KS, C_ACCENT, 0, W, clockFont);
+  }
 
   char buf[64];
-  upcase(S.data, buf, sizeof(buf));
-  pxBig(s, buf, 12, 88, 3, rgb(200, 204, 212));
-  if (S.wOk) {
+  if (dateSize > 0) {
+    upcase(S.data, buf, sizeof(buf));
+    pxBig(s, buf, dateX, dateY, dateSize, rgb(200, 204, 212), dateX, 316, clockFont);
+  }
+  if (weaSize > 0 && S.wOk) {
     char t[10];
     snprintf(t, sizeof(t), "%d~C", S.tc);
-    int tw = pxWidth(t) * 3;
-    pxBig(s, t, 308 - tw, 88, 3, C_TEXT);
-    pxIconBig(s, weatherIconName(S.ic, S.day), 308 - tw - 22, 86, 2);
+    int th = pxTextH(weaSize, clockFont);
+    int ik = max(1, (th + 3) / 8);
+    int iy = weaY + (th - 8 * ik) / 2;
+    pxIconBig(s, weatherIconName(S.ic, S.day), weaX, iy, ik);
+    int tx = weaX + 8 * ik + max(3, ik * 2);
+    pxBig(s, t, tx, weaY, weaSize, C_TEXT, tx, 316, clockFont);
   }
 
-  // proximo compromisso (rola se nao couber) ou o motivo de estar sem dados
-  uint16_t col = C_BLUE;
-  buf[0] = '\0';
-  if (stale && linkErr[0]) {
-    upcase(linkErr, buf, sizeof(buf));
-    col = C_BAD;
-  } else if (S.nev > 0) {
-    char raw[72];
-    snprintf(raw, sizeof(raw), "%s %s", S.ev[0].when, S.ev[0].title);
-    upcase(raw, buf, sizeof(buf));
-    if (S.ev[0].now) col = C_ACCENT;
-  }
-  if (buf[0]) {
-    int lw = pxWidth(buf) * 3, avail = 296;
-    int off = lw > avail ? avail - (int)((frameNo >> 1) % (lw + avail)) : 0;
-    pxBig(s, buf, 12 + off, 110, 3, col, 12, 308);
+  // proximo compromisso (fixo, sem rolar) ou o motivo de estar sem dados
+  if (evSize > 0) {
+    uint16_t col = C_BLUE;
+    buf[0] = '\0';
+    if (stale && linkErr[0]) {
+      upcase(linkErr, buf, sizeof(buf));
+      col = C_BAD;
+    } else if (S.nev > 0) {
+      char raw[72];
+      snprintf(raw, sizeof(raw), "%s %s", S.ev[0].when, S.ev[0].title);
+      upcase(raw, buf, sizeof(buf));
+      if (S.ev[0].now) col = C_ACCENT;
+    }
+    if (buf[0]) pxBig(s, buf, evX, evY, evSize, col, evX, 316, clockFont);
   }
   s.pushSprite(0, 0);
 }
@@ -660,6 +669,19 @@ bool handlePayload(const String& body) {
   const char* scn = lay["sc"] | "none";
   showSec = (lay["sec"] | 1) == 1;
   clockCol = lay["col"] | 0xFE87;
+  clockFont = constrain((int)(lay["fn"] | 0), 0, 4);
+  clockSize = constrain((int)(lay["cs"] | 12), 4, 18);
+  clockX = constrain((int)(lay["cx"] | -1), -1, 300);
+  clockY = constrain((int)(lay["cy"] | 14), 0, 225);
+  dateSize = constrain((int)(lay["ds"] | 3), 0, 8);
+  dateX = constrain((int)(lay["dx"] | 12), 0, 300);
+  dateY = constrain((int)(lay["dy"] | 88), 0, 228);
+  weaSize = constrain((int)(lay["ws"] | 3), 0, 8);
+  weaX = constrain((int)(lay["wx"] | 238), 0, 300);
+  weaY = constrain((int)(lay["wy"] | 88), 0, 228);
+  evSize = constrain((int)(lay["es"] | 3), 0, 8);
+  evX = constrain((int)(lay["ex"] | 12), 0, 300);
+  evY = constrain((int)(lay["ey"] | 110), 0, 228);
   if (want != mode || (want == M_CLOCK && strcmp(scn, sceneName) != 0)) {
     // troca de tipo de tela (ou de animacao): limpa e (re)aloca o sprite
     mode = want;

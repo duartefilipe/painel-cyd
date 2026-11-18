@@ -40,8 +40,12 @@ Cada tela define o widget de cada região:
 Além do tipo `grid` (as três regiões acima), uma tela pode ser:
 
 - `kind: "clock"` — **relógio de mesa**: animação em pixel art em tela cheia (`scene`:
-  `aquarium`, `stars`, `matrix`, `fire` ou `none`) e, por cima, hora pixelada (com cor e
-  segundos opcionais), data, tempo e próximo compromisso.
+  `aquarium`, `stars`, `matrix`, `fire`, `rain`, `sunset`, `snow`, `aurora` ou `none`) e,
+  por cima, hora pixelada, data, tempo e próximo compromisso (fixo, sem rolar). Cada item
+  tem tamanho e posição próprios (`csize/cx/cy`, `dsize/dx/dy`, `wsize/wx/wy`,
+  `esize/ex/ey`; tamanho 0 esconde, `cx = -1` centraliza a hora), que podem ser ajustados
+  arrastando na prévia do painel. `font`: `pixel`, `dots` (LED redondo), `segment`
+  (7 segmentos), `arcade` ou `clean` (as duas últimas com a fonte 5×7).
 - `kind: "pixel"` — **relógio pixel (matriz 32×8)**: faixa de LEDs simulada (32×8 em
   blocos de 10×10 px) onde uma lista de até 8 `apps` (`clock`, `date`, `weather`,
   `quote`, `event`, `cpu`, `text`) se alterna com transição vertical (`slide` ou `none`).

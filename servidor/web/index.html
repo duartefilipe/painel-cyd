@@ -109,6 +109,27 @@
   .sc-fire { background: linear-gradient(to top, #fff3b0 0%, #ffb02e 18%, #e2481c 40%, #5a0d06 70%, #0c0e12 100%); animation: flick .25s steps(2) infinite alternate; }
   @keyframes flick { to { filter: brightness(1.15) saturate(1.2); } }
   .sc-none { background: #0c0e12; }
+  .sc-rain { background: linear-gradient(#060a16, #18263e 87%); }
+  .sc-rain p { position: absolute; top: -12%; margin: 0; width: 1px; height: 9%; background: #8cbef5; opacity: .75; transform: rotate(16deg); animation: drop .7s linear infinite; }
+  .sc-rain u { position: absolute; left: 0; right: 0; bottom: 0; height: 12%; background: #0e1a2c; border-top: 1px solid #1c2a44; }
+  @keyframes drop { to { top: 88%; } }
+  .sc-sunset { background: linear-gradient(#12062a 0%, #5a1466 30%, #ff6a46 59%, #0e041c 59%); }
+  .sc-sunset em { position: absolute; left: 39%; top: 28%; width: 22%; height: 31%; border-radius: 999px 999px 0 0; background: linear-gradient(#ffe63c, #ff4f8c); -webkit-mask: repeating-linear-gradient(#000 0 14%, transparent 14% 18%); mask: repeating-linear-gradient(#000 0 14%, transparent 14% 18%); }
+  .sc-sunset u { position: absolute; left: 0; right: 0; bottom: 0; height: 41%; border-top: 1px solid #00f0ff; background: repeating-linear-gradient(transparent 0 16%, #d7239b 16% 19%), repeating-linear-gradient(90deg, transparent 0 9%, #d7239b 9% 9.7%); animation: grid 1s linear infinite; }
+  @keyframes grid { to { background-position: 0 20%, 0 0; } }
+  .sc-snow { background: linear-gradient(#0a1222, #2c405e 89%); }
+  .sc-snow s { position: absolute; top: -3%; width: 3px; height: 3px; border-radius: 50%; background: #fff; animation: flake 5s linear infinite; }
+  .sc-snow u { position: absolute; left: 0; right: 0; bottom: 0; height: 11%; background: #d7e4f2; }
+  @keyframes flake { to { top: 89%; transform: translateX(10px); } }
+  .sc-aurora { background: #04081a; }
+  .sc-aurora em { position: absolute; left: -10%; right: -10%; top: 14%; height: 30%; border-radius: 50%; background: linear-gradient(transparent, #18d29a99, #5a3cc055, transparent); filter: blur(6px); animation: aur 6s ease-in-out infinite alternate; }
+  .sc-aurora em + em { top: 34%; animation-duration: 8s; animation-direction: alternate-reverse; opacity: .7; }
+  .sc-aurora u { position: absolute; left: 0; right: 0; bottom: 0; height: 17%; background: #06101a; border-top: 1px solid #19464f; }
+  @keyframes aur { to { transform: translateX(8%) skewX(-14deg); } }
+  .scr .sizes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-bottom: 8px; font-size: 12px; }
+  .scr .sizes label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .scr .sizes input { flex: 1; min-width: 0; }
+  .scr .sizes span { min-width: 16px; text-align: right; color: var(--text); }
   .scr .opts { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; font-size: 12px; }
   .scr .opts select { padding: 5px 6px; }
   .scr .opts input[type=color], .app input[type=color] { width: 34px; height: 28px; padding: 2px; }
@@ -215,7 +236,8 @@ const WIDGETS_BOTTOM = { ev: "Agenda", none: "(vazio)" };
 const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa", pixel: "Relogio pixel (LEDs)" };
 const APP_TYPES = { clock: "Hora", date: "Data", weather: "Tempo", quote: "Cotacao", event: "Prox. compromisso", cpu: "CPU do PC", text: "Texto livre" };
 const TRANS = { slide: "Deslizar", none: "Corte seco" };
-const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", none: "Sem animacao" };
+const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", rain: "Noite de chuva", sunset: "Synthwave", snow: "Nevasca", aurora: "Aurora boreal", none: "Sem animacao" };
+const FONTS = { pixel: "Pixel", dots: "LED redondo", segment: "7 segmentos", arcade: "Arcade 5x7", clean: "Lisa 5x7" };
 
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -286,16 +308,67 @@ function pxEach(t, dot) {
     x += w + 1;
   }
 }
-// Texto em blocos grandes num canvas 320x240 (relogio de mesa), com sombra escura.
-function pxBig(ctx, t, x0, y0, k, color, clip = [0, 320]) {
-  const gap = k >= 6 ? 2 : 0, r = k >= 8 ? 2 : 0;
+// Fontes do relogio de mesa (mesma numeracao do firmware): 0 pixel, 1 LED redondo, 2 7 segmentos, 3 arcade 5x7, 4 lisa 5x7
+const FONT_ID = { pixel: 0, dots: 1, segment: 2, arcade: 3, clean: 4 };
+const SEG7 = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f];
+const s57 = (k) => Math.max(1, Math.floor((k * 2 + 1) / 3));
+function w57(t) {
+  let w = 0;
+  for (const ch of t) w += (PX.font57[ch] || PX.font57[" "])[1] + 1;
+  return Math.max(0, w - 1);
+}
+const pxTextW = (t, k, f = 0) => (f >= 3 ? w57(t) * s57(k) : pxWidth(t) * k);
+const pxTextH = (k, f = 0) => (f >= 3 ? 7 * s57(k) : 5 * k);
+function segDigit(ctx, d, x, y, k) {
+  const m0 = SEG7[d], gap = k >= 6 ? 2 : 0, w = 3 * k - gap, h = 5 * k - gap;
+  const t = Math.max(1, Math.floor((k * 2 + 1) / 3)), m = Math.floor((h - t) / 2), g = k >= 5 ? 2 : k >= 3 ? 1 : 0;
+  if (m0 & 0x01) ctx.fillRect(x + g, y, w - 2 * g, t);
+  if (m0 & 0x40) ctx.fillRect(x + g, y + m, w - 2 * g, t);
+  if (m0 & 0x08) ctx.fillRect(x + g, y + h - t, w - 2 * g, t);
+  if (m0 & 0x20) ctx.fillRect(x, y + g, t, m - g);
+  if (m0 & 0x02) ctx.fillRect(x + w - t, y + g, t, m - g);
+  if (m0 & 0x10) ctx.fillRect(x, y + m + t, t, h - m - t - g);
+  if (m0 & 0x04) ctx.fillRect(x + w - t, y + m + t, t, h - m - t - g);
+}
+// Texto ampliado num canvas 320x240 (relogio de mesa), com sombra escura. Espelha pxBig() do firmware.
+function pxBig(ctx, t, x0, y0, k, color, clip = [0, 320], f = 0) {
+  if (k <= 0) return;
   for (const pass of [0, 1]) {
     ctx.fillStyle = pass ? color : "rgba(0,0,0,.85)";
-    pxEach(t, (x, y) => {
-      const X = x0 + x * k + (pass ? 0 : 2), Y = y0 + y * k + (pass ? 0 : 2);
-      if (X + k < clip[0] || X > clip[1]) return;
-      ctx.beginPath(); ctx.roundRect(X, Y, k - gap, k - gap, r); ctx.fill();
-    });
+    const off = pass ? 0 : 2;
+    const sq = (X, Y, s, round) => { if (round) { ctx.beginPath(); ctx.roundRect(X, Y, s, s, 2); ctx.fill(); } else ctx.fillRect(X, Y, s, s); };
+    if (f >= 3) {
+      const ks = s57(k), gap = f === 3 && ks >= 4 ? (ks >= 7 ? 2 : 1) : 0, sz = ks - gap;
+      let x = x0;
+      for (const ch of t) {
+        const [rows, w] = PX.font57[ch] || PX.font57[" "];
+        for (let y = 0; y < 7; y++) for (let gx = 0; gx < w; gx++) {
+          if (!((rows[y] >> gx) & 1)) continue;
+          const X = x + gx * ks, Y = y0 + y * ks;
+          if (X < clip[0] || X + ks > clip[1]) continue;
+          sq(X + off, Y + off, sz, pass && f === 3 && ks >= 6);
+        }
+        x += (w + 1) * ks;
+      }
+      continue;
+    }
+    const gap = f === 2 ? 0 : k >= 6 ? 2 : f === 1 && k >= 3 ? 1 : 0, sz = k - gap;
+    let x = x0;
+    for (const ch of t) {
+      if (f === 2 && ch >= "0" && ch <= "9") {
+        if (x >= clip[0] && x + 3 * k <= clip[1]) segDigit(ctx, +ch, x + off, y0 + off, k);
+        x += 4 * k; continue;
+      }
+      const [bits, w] = PX.font[ch] || PX.font[" "];
+      for (let y = 0; y < 5; y++) for (let gx = 0; gx < w; gx++) {
+        if (!((bits >> (y * 3 + gx)) & 1)) continue;
+        const X = x + gx * k, Y = y0 + y * k;
+        if (X < clip[0] || X + k > clip[1]) continue;
+        if (f === 1) { ctx.beginPath(); ctx.arc(X + off + Math.floor(k / 2), Y + off + Math.floor(k / 2), Math.max(1, Math.floor(sz / 2)) + 0.5, 0, 7); ctx.fill(); }
+        else sq(X + off, Y + off, sz, pass && f === 0 && k >= 8);
+      }
+      x += (w + 1) * k;
+    }
   }
 }
 function pxIconBig(ctx, name, x0, y0, k) {
@@ -319,34 +392,84 @@ function renderClock(el, p, live) {
   }
   const cv = animCanvas(el, "ov");
   const a = anims.get(cv) || { kind: "clock", fr: 0 };
-  Object.assign(a, { p, stale });
+  Object.assign(a, { p, stale, edit: !live });
   anims.set(cv, a);
+  return cv;
 }
+// Layout do relogio com os padroes (telas antigas nao tem esses campos)
+const CLOCK_DEF = { fn: 0, cs: 12, cx: -1, cy: 14, ds: 3, dx: 12, dy: 88, ws: 3, wx: 238, wy: 88, es: 3, ex: 12, ey: 110 };
+const pxClean = (s) => String(s || "").toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
 function drawClock(cv, a) {
-  const ctx = cv.getContext("2d"), p = a.p, d = new Date();
+  const ctx = cv.getContext("2d"), p = a.p, d = new Date(), L = { ...CLOCK_DEF, ...p.lay }, f = L.fn;
   ctx.clearRect(0, 0, 320, 240);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  const K = 12, KS = 5, wHM = pxWidth(hm) * K, wS = p.lay.sec ? pxWidth(ss) * KS + 8 : 0;
-  const x = Math.round((320 - wHM - wS) / 2);
-  pxBig(ctx, hm, x, 14, K, a.stale ? "#828a98" : c565(p.lay.col || 0xFE87));
-  if (p.lay.sec) pxBig(ctx, ss, x + wHM + 8, 14, KS, "#ff8c28");
-  const info = (p.d || "").toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
-  pxBig(ctx, info, 12, 88, 3, "#c8ccd4");
-  const w = p.w || {};
-  if (w.ok) {
-    const t = `${w.tc}~C`, tw = pxWidth(t) * 3;
-    pxBig(ctx, t, 308 - tw, 88, 3, "#ffffff");
-    pxIconBig(ctx, { S: w.day ? "sun" : "moon", P: "partly", C: "cloud", F: "fog", R: "rain", T: "storm", N: "snow" }[w.ic] || "cloud", 308 - tw - 22, 86, 2);
+  const boxes = {};  // area de cada item, para arrastar na previa: [x, y, w, h, ancoraX, ancoraY]
+  if (L.cs > 0) {
+    const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    const K = L.cs, KS = Math.max(2, Math.floor((K * 5 + 6) / 12)), gap = Math.max(4, Math.floor(K * 2 / 3));
+    const wHM = pxTextW(hm, K, f), wS = L.sec ? pxTextW(ss, KS, f) + gap : 0;
+    const x = L.cx < 0 ? Math.floor((320 - wHM - wS) / 2) : L.cx;
+    pxBig(ctx, hm, x, L.cy, K, a.stale ? "#828a98" : c565(L.col || 0xfe87), [0, 320], f);
+    if (L.sec) pxBig(ctx, ss, x + wHM + gap, L.cy, KS, "#ff8c28", [0, 320], f);
+    boxes.clock = [x, L.cy, wHM + wS, pxTextH(K, f), x, L.cy];
   }
-  const ev = p.ev || { l: [] };
-  let line = "", col = "#64a5ff";
-  if (a.stale) { line = "PLACA OFFLINE"; col = "#eb5046"; }
-  else if (ev.l && ev.l.length) { line = `${ev.l[0][0]} ${ev.l[0][1]}`; if (ev.l[0][2]) col = "#ff8c28"; }
-  line = line.toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
-  const lw = pxWidth(line) * 3;
-  const off = lw > 296 ? 296 - ((a.fr >> 1) % (lw + 296)) : 0;  // rola se nao couber
-  pxBig(ctx, line, 12 + off, 110, 3, col, [12, 308]);
+  if (L.ds > 0) {
+    const info = pxClean(p.d);
+    pxBig(ctx, info, L.dx, L.dy, L.ds, "#c8ccd4", [L.dx, 316], f);
+    boxes.date = [L.dx, L.dy, Math.min(pxTextW(info, L.ds, f), 316 - L.dx), pxTextH(L.ds, f), L.dx, L.dy];
+  }
+  const w = p.w || {};
+  if (L.ws > 0 && w.ok) {
+    const t = `${w.tc}~C`, th = pxTextH(L.ws, f), ik = Math.max(1, Math.floor((th + 3) / 8));
+    const iy = L.wy + Math.trunc((th - 8 * ik) / 2), tx = L.wx + 8 * ik + Math.max(3, ik * 2);
+    pxIconBig(ctx, { S: w.day ? "sun" : "moon", P: "partly", C: "cloud", F: "fog", R: "rain", T: "storm", N: "snow" }[w.ic] || "cloud", L.wx, iy, ik);
+    pxBig(ctx, t, tx, L.wy, L.ws, "#ffffff", [tx, 316], f);
+    boxes.w = [L.wx, Math.min(L.wy, iy), tx - L.wx + pxTextW(t, L.ws, f), Math.max(th, 8 * ik), L.wx, L.wy];
+  }
+  if (L.es > 0) {
+    const ev = p.ev || { l: [] };
+    let line = "", col = "#64a5ff";
+    if (a.stale) { line = "PLACA OFFLINE"; col = "#eb5046"; }
+    else if (ev.l && ev.l.length) { line = `${ev.l[0][0]} ${ev.l[0][1]}`; if (ev.l[0][2]) col = "#ff8c28"; }
+    else if (a.edit) { line = "PROXIMO COMPROMISSO"; col = "#3c5a80"; }  // so na previa, para poder posicionar
+    line = pxClean(line);
+    pxBig(ctx, line, L.ex, L.ey, L.es, col, [L.ex, 316], f);  // fixo: corta no fim da tela, sem rolar
+    boxes.ev = [L.ex, L.ey, Math.min(pxTextW(line, L.es, f), 316 - L.ex), pxTextH(L.es, f), L.ex, L.ey];
+  }
+  a.boxes = boxes;
+  if (a.edit) {  // contorno discreto dos itens arrastaveis
+    ctx.save(); ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+    for (const [k, b] of Object.entries(boxes)) {
+      ctx.strokeStyle = k === a.sel ? "rgba(255,140,40,.95)" : "rgba(255,255,255,.22)";
+      ctx.strokeRect(b[0] - 2.5, b[1] - 2.5, b[2] + 5, b[3] + 5);
+    }
+    ctx.restore();
+  }
+}
+// Arrastar hora, data, tempo e agenda na previa do cartao (coordenadas da tela 320x240).
+const DRAG_FIELDS = { clock: ["cx", "cy", 225], date: ["dx", "dy", 228], w: ["wx", "wy", 228], ev: ["ex", "ey", 228] };
+function enableDrag(cv, i) {
+  if (cv.dataset.drag) return;
+  cv.dataset.drag = "1"; cv.style.cursor = "move"; cv.style.touchAction = "none";
+  const pt = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * 320 / r.width, (e.clientY - r.top) * 240 / r.height]; };
+  let drag = null;
+  cv.onpointerdown = (e) => {
+    const a = anims.get(cv); if (!a || !a.boxes) return;
+    const [x, y] = pt(e);
+    const hit = Object.entries(a.boxes).reverse().find(([, b]) => x >= b[0] - 5 && x <= b[0] + b[2] + 5 && y >= b[1] - 5 && y <= b[1] + b[3] + 5);
+    if (!hit) return;
+    const [key, b] = hit;
+    drag = { key, ox: x - b[4], oy: y - b[5] }; a.sel = key;
+    cv.setPointerCapture(e.pointerId); e.preventDefault();
+  };
+  cv.onpointermove = (e) => {
+    if (!drag) return;
+    const [x, y] = pt(e), [fx, fy, maxY] = DRAG_FIELDS[drag.key], s = draft[i];
+    s[fx] = Math.max(0, Math.min(300, Math.round(x - drag.ox)));
+    s[fy] = Math.max(0, Math.min(maxY, Math.round(y - drag.oy)));
+    markDirty(); paintPreviews();
+  };
+  cv.onpointerup = cv.onpointercancel = () => { drag = null; const a = anims.get(cv); if (a) a.sel = null; };
 }
 
 // ---- relogio pixel: faixa 32x8 de LEDs com apps se alternando ----
@@ -436,6 +559,10 @@ function sceneHtml(sc) {
   if (sc === "stars") return Array.from({ length: 24 }, (_, i) => `<s style="left:${(i * 37) % 100}%;top:${(i * 53) % 90}%;animation-delay:${(i % 7) * .3}s"></s>`).join("") + "<em>☾</em>";
   if (sc === "matrix") return Array.from({ length: 14 }, (_, i) => `<p style="left:${i * 7.2}%;animation-delay:${(i * 0.37) % 2}s">${"01アイウ7Zｱｶ".split("").sort(() => i % 2 - .5).join("<br>")}</p>`).join("");
   if (sc === "fire") return "";
+  if (sc === "rain") return Array.from({ length: 30 }, (_, i) => `<p style="left:${(i * 31) % 100}%;animation-delay:${((i * 0.13) % 0.7).toFixed(2)}s"></p>`).join("") + "<u></u>";
+  if (sc === "sunset") return "<em></em><u></u>";
+  if (sc === "snow") return Array.from({ length: 34 }, (_, i) => `<s style="left:${(i * 29) % 100}%;animation-delay:-${(i * 0.41) % 6}s;animation-duration:${4 + (i % 4)}s"></s>`).join("") + "<u></u>";
+  if (sc === "aurora") return "<em></em><em></em><u></u>";
   return "";
 }
 function renderScreen(el, p, live) {
@@ -493,8 +620,17 @@ function renderScreens() {
         ${(s.kind || "grid") === "clock" ? `
         <div class="opts">
           <span class="muted">Animacao</span><select data-f="scene">${opts(SCENES, s.scene || "aquarium")}</select>
+          <span class="muted">Fonte</span><select data-f="font">${opts(FONTS, s.font || "pixel")}</select>
           <span class="muted">Cor da hora</span><input type="color" data-f="color" value="${esc(s.color || "#ffd23c")}">
           <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="seconds" ${s.seconds !== false ? "checked" : ""}> segundos</label>
+        </div>
+        <div class="sizes">
+          ${[["csize", "Hora", 4, 18, 12], ["dsize", "Data", 0, 8, 3], ["wsize", "Tempo", 0, 8, 3], ["esize", "Agenda", 0, 8, 3]].map(([f, lbl, mn, mx, df]) =>
+            `<label>${lbl}<input type="range" data-f="${f}" min="${mn}" max="${mx}" value="${s[f] ?? df}"><span data-v="${f}">${s[f] ?? df}</span></label>`).join("")}
+        </div>
+        <div class="opts muted">Arraste os itens na previa para posiciona-los · tamanho 0 esconde o item
+          <button class="ghost" data-center title="Volta a centralizar a hora">Centralizar hora</button>
+          <button class="ghost" data-resetpos>Posicoes padrao</button>
         </div>` : (s.kind || "grid") === "pixel" ? `
         <div class="opts"><span class="muted">Transicao</span><select data-f="trans">${opts(TRANS, s.trans || "slide")}</select>
           <span class="muted">Apps alternam na ordem abaixo</span></div>
@@ -521,7 +657,8 @@ function renderScreens() {
       const i = +el.dataset.i;
       el.querySelectorAll("[data-f]").forEach((inp) => {
         inp.oninput = () => {
-          draft[i][inp.dataset.f] = inp.type === "checkbox" ? inp.checked : inp.value;
+          draft[i][inp.dataset.f] = inp.type === "checkbox" ? inp.checked : inp.type === "range" ? +inp.value : inp.value;
+          const v = el.querySelector(`[data-v="${inp.dataset.f}"]`); if (v) v.textContent = inp.value;
           markDirty();
           // trocar o tipo muda os campos do cartao: redesenha
           if ("rebuild" in inp.dataset) { box.innerHTML = ""; renderScreens(); } else paintPreviews();
@@ -545,6 +682,13 @@ function renderScreens() {
         row.querySelector("[data-rm]").onclick = () => { draft[i].apps.splice(j, 1); rebuild(); };
       });
       const add = el.querySelector("[data-addapp]");
+      const ctr = el.querySelector("[data-center]");
+      if (ctr) ctr.onclick = () => { draft[i].cx = -1; markDirty(); paintPreviews(); };
+      const rst = el.querySelector("[data-resetpos]");
+      if (rst) rst.onclick = () => {
+        Object.assign(draft[i], { cx: -1, cy: 14, dx: 12, dy: 88, wx: 238, wy: 88, ex: 12, ey: 110 });
+        markDirty(); paintPreviews();
+      };
       if (add) add.onclick = () => {
         draft[i].apps = draft[i].apps || [];
         draft[i].apps.push({ type: "text", icon: "auto", color: "#ffffff", dur: 6, text: "OLA", pair: "USD-BRL" });
@@ -566,10 +710,13 @@ function paintPreviews() {
     const base = Object.values(S.payloads)[0];
     const p = { ...base, sys: S.pc.online ? S.sys : null, w: S.payloads[Object.keys(S.payloads).find((k) => S.payloads[k].w)]?.w || { ok: 0, city: "" },
       fx: Object.values(S.payloads).find((x) => x.fx)?.fx || fxLocal(), ev: Object.values(S.payloads).find((x) => x.ev)?.ev || { st: "off", l: [] },
-      lay: s.kind === "clock" ? { f: "clock", sc: s.scene || "aquarium", sec: s.seconds !== false ? 1 : 0, col: hex565(s.color || "#ffd23c") }
+      lay: s.kind === "clock" ? { f: "clock", sc: s.scene || "aquarium", sec: s.seconds !== false ? 1 : 0, col: hex565(s.color || "#ffd23c"),
+          fn: FONT_ID[s.font] ?? 0, cs: s.csize ?? 12, cx: s.cx ?? -1, cy: s.cy ?? 14, ds: s.dsize ?? 3, dx: s.dx ?? 12, dy: s.dy ?? 88,
+          ws: s.wsize ?? 3, wx: s.wx ?? 238, wy: s.wy ?? 88, es: s.esize ?? 3, ex: s.ex ?? 12, ey: s.ey ?? 110 }
         : s.kind === "pixel" ? { f: "pixel", tr: s.trans || "slide", a: PX ? appsLocal(s) : [] }
         : { l: s.left, r: s.right, b: s.bottom } };
-    renderScreen(el.querySelector("[data-prev]"), p, false);
+    const cv = renderScreen(el.querySelector("[data-prev]"), p, false);
+    if (s.kind === "clock" && cv) enableDrag(cv, +el.dataset.i);
     el.classList.toggle("active", s.id === S.active);
     el.querySelector("[data-badge]").style.display = s.id === S.active ? "" : "none";
   });

@@ -50,7 +50,8 @@ SLOT_BOTTOM = {"ev", "none"}
 # grid = 3 regioes; clock = relogio de mesa (animacao em tela cheia + hora pixelada);
 # pixel = faixa de LEDs 32x8 com "apps" que se alternam
 KINDS = {"grid", "clock", "pixel"}
-SCENES = {"aquarium", "stars", "matrix", "fire", "none"}   # animacao de fundo do relogio
+SCENES = {"aquarium", "stars", "matrix", "fire", "rain", "sunset", "snow", "aurora", "none"}   # animacao de fundo do relogio
+FONTS = {"pixel": 0, "dots": 1, "segment": 2, "arcade": 3, "clean": 4}
 APP_TYPES = {"clock", "date", "weather", "quote", "event", "cpu", "text"}
 TRANSITIONS = {"slide", "none"}
 MAX_APPS = 8
@@ -283,7 +284,12 @@ def build_payload(screen: dict | None = None) -> dict:
     if kind == "clock":
         lay = {"n": ascii_text(scr["name"], 14), "f": "clock",
                "sc": scr.get("scene", "aquarium"), "sec": 1 if scr.get("seconds", True) else 0,
-               "col": hex565(scr.get("color", "#ffd23c"))}
+               "col": hex565(scr.get("color", "#ffd23c")),
+               "fn": FONTS.get(scr.get("font", "pixel"), 0),
+               "cs": int(scr.get("csize", 12)), "cx": int(scr.get("cx", -1)), "cy": int(scr.get("cy", 14)),
+               "ds": int(scr.get("dsize", 3)), "dx": int(scr.get("dx", 12)), "dy": int(scr.get("dy", 88)),
+               "ws": int(scr.get("wsize", 3)), "wx": int(scr.get("wx", 238)), "wy": int(scr.get("wy", 88)),
+               "es": int(scr.get("esize", 3)), "ex": int(scr.get("ex", 12)), "ey": int(scr.get("ey", 110))}
     elif kind == "pixel":
         lay = {"n": ascii_text(scr["name"], 14), "f": "pixel", "tr": scr.get("trans", "slide"),
                "a": pixel_apps(scr, cfg, now, online)}
@@ -360,6 +366,13 @@ def clean_apps(apps) -> list:
     return out
 
 
+def _clamp(v, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return default
+
+
 def clean_screens(screens) -> list:
     out, seen = [], set()
     for s in screens if isinstance(screens, list) else []:
@@ -377,6 +390,19 @@ def clean_screens(screens) -> list:
             "scene": s.get("scene") if s.get("scene") in SCENES else "aquarium",
             "seconds": bool(s.get("seconds", True)),
             "color": clean_hex(s.get("color"), "#ffd23c"),
+            "font": s.get("font") if s.get("font") in FONTS else "pixel",
+            "csize": _clamp(s.get("csize", 12), 4, 18, 12),
+            "cx": _clamp(s.get("cx", -1), -1, 300, -1),
+            "cy": _clamp(s.get("cy", 14), 0, 225, 14),
+            "dsize": _clamp(s.get("dsize", 3), 0, 8, 3),
+            "dx": _clamp(s.get("dx", 12), 0, 300, 12),
+            "dy": _clamp(s.get("dy", 88), 0, 228, 88),
+            "wsize": _clamp(s.get("wsize", 3), 0, 8, 3),
+            "wx": _clamp(s.get("wx", 238), 0, 300, 238),
+            "wy": _clamp(s.get("wy", 88), 0, 228, 88),
+            "esize": _clamp(s.get("esize", 3), 0, 8, 3),
+            "ex": _clamp(s.get("ex", 12), 0, 300, 12),
+            "ey": _clamp(s.get("ey", 110), 0, 228, 110),
             "trans": s.get("trans") if s.get("trans") in TRANSITIONS else "slide",
             "apps": clean_apps(s.get("apps")),
         })

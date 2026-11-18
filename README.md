@@ -20,8 +20,10 @@ como exibir:
 Além da tela em regiões, uma tela pode ser:
 
 - **Relógio de mesa:** animação em pixel art ocupando a tela inteira (aquário, céu
-  estrelado, chuva Matrix ou fogo) com hora pixelada, data, tempo e próximo compromisso
-  por cima.
+  estrelado, chuva Matrix, fogo, noite de chuva, synthwave, nevasca ou aurora boreal)
+  com hora, data, tempo e próximo compromisso por cima. Fonte (pixel, LED, 7 segmentos,
+  arcade, lisa), tamanho e posição de cada item são ajustáveis; no painel basta arrastar
+  os itens na prévia.
 - **Relógio pixel (matriz 32×8):** simula um painel de LEDs 32×8 (estilo Ulanzi/AWTRIX)
   com uma sequência de "apps" (hora, data, tempo, cotação, agenda, CPU, texto) que se
   alternam deslizando.
