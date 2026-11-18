@@ -3,7 +3,7 @@ from datetime import datetime
 
 import requests
 
-TZ = "America/Sao_Paulo"
+from config import TZ, TZ_NAME
 
 
 def icon_for(code: int) -> str:
@@ -40,7 +40,7 @@ def fetch(lat: float, lon: float) -> dict:
             "current": "temperature_2m,weather_code,is_day,relative_humidity_2m",
             "hourly": "temperature_2m,weather_code,precipitation_probability",
             "daily": "temperature_2m_max,temperature_2m_min",
-            "timezone": TZ,
+            "timezone": TZ_NAME,
             "forecast_days": 2,
         },
         timeout=15,
@@ -49,8 +49,8 @@ def fetch(lat: float, lon: float) -> dict:
     j = r.json()
     cur, hourly, daily = j["current"], j["hourly"], j["daily"]
 
-    # As 4 proximas horas cheias depois de agora.
-    now = datetime.now().replace(minute=0, second=0, microsecond=0)
+    # As 4 proximas horas cheias depois de agora (horarios do Open-Meteo vem no fuso local, sem tz).
+    now = datetime.now(TZ).replace(minute=0, second=0, microsecond=0, tzinfo=None)
     hours = []
     for i, ts in enumerate(hourly["time"]):
         t = datetime.fromisoformat(ts)

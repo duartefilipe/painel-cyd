@@ -32,11 +32,20 @@ Em [Google Auth Platform](https://console.cloud.google.com/auth/overview):
 
 ## 4. Conectar pelo painel
 
-1. Abra `http://localhost:8765`.
+O servidor roda em outra máquina da rede, e um cliente do tipo "App para computador" só
+pode voltar do login para `localhost`. Por isso o último passo é copiar e colar:
+
+1. Abra `http://<ip-do-servidor>:8765`.
 2. No card **Google Agenda**, envie o JSON baixado.
-3. Clique em **Conectar Google Agenda** e entre com a sua conta.
+3. Clique em **Abrir o login do Google** e entre com a sua conta.
 4. O Google avisa que o app **não foi verificado**. É esperado, porque o app é seu: clique
    em **Continuar** e marque as duas permissões da agenda.
+5. O navegador vai para `http://localhost:8765/oauth/callback?state=...&code=...` e mostra
+   **erro de conexão**. Isso é normal. **Copie o endereço inteiro** da barra.
+6. Cole no campo do painel e clique em **Concluir**.
+
+**Atalho:** se você já tinha o painel antigo (USB) conectado, envie o `token.json` da pasta
+`data/` do PC em **Enviar token**. Não precisa refazer o login.
 
 De volta ao painel, escolha quais agendas aparecem na tela. Os compromissos chegam na
 placa em até 2 minutos; o botão **Atualizar agora** busca na hora.
@@ -56,7 +65,7 @@ Enquanto o app estiver em **"Testando"**, o Google invalida o token de renovaç�
 7 dias. Nesse momento:
 
 - a tela da placa mostra **"Reconecte o Google"** no lugar da agenda;
-- o card do painel ganha o botão **Reconectar**, e um clique resolve.
+- o card do painel volta a mostrar o login (passos 3 a 6 acima).
 
 Para acabar com isso, publique o app: **Público-alvo → Publicar app**. O botão só acende
 depois que a página **Branding** tiver **URL da página inicial** e **URL da política de
@@ -65,5 +74,5 @@ verificado" no login, mas o token não vence mais em 7 dias.
 
 ## Desconectar
 
-**Desconectar** no painel apaga o token local (`data/token.json`). Para revogar também do
+**Desconectar** no painel apaga o token do servidor (`/data/token.json` no volume). Para revogar também do
 lado do Google: [myaccount.google.com/permissions](https://myaccount.google.com/permissions).

@@ -1,5 +1,12 @@
 """Google Agenda por OAuth. A credencial do app (client_secret.json) e o token
-do usuario ficam em data/, que esta fora do git."""
+do usuario ficam no diretorio de dados (volume do container), fora do git.
+
+O servidor roda em outra maquina da rede, e o Google so aceita redirecionar um
+cliente "App para computador" para localhost. Por isso o login termina assim:
+o navegador cai em http://localhost:.../oauth/callback?code=... (pagina que nao
+abre) e o usuario cola esse endereco no painel. Alternativa: enviar o token.json
+gerado no PC.
+"""
 import json
 import os
 from datetime import date, datetime, timedelta
@@ -10,10 +17,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-from config import DATA
+from config import DATA, TZ, TZ_NAME
 
-# O painel roda em http://localhost; o oauthlib so aceita http com esta flag.
-# Seguro aqui porque o servidor escuta apenas em 127.0.0.1.
+# O redirect e http://localhost; o oauthlib so aceita http com esta flag.
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 SCOPES = [
@@ -22,7 +28,7 @@ SCOPES = [
 ]
 SECRET = DATA / "client_secret.json"
 TOKEN = DATA / "token.json"
-TZ = "America/Sao_Paulo"
+REDIRECT_URI = "http://localhost:8765/oauth/callback"
 
 
 class NeedsReconnect(Exception):
@@ -43,6 +49,13 @@ class GCal:
         if "installed" not in data and "web" not in data:
             raise ValueError("Arquivo nao parece um client_secret do Google (falta 'installed').")
         SECRET.write_bytes(raw)
+
+    def save_token(self, raw: bytes):
+        data = json.loads(raw)
+        if "refresh_token" not in data:
+            raise ValueError("Arquivo nao parece um token.json do painel (falta 'refresh_token').")
+        TOKEN.write_bytes(raw)
+        self.account = None
 
     def connected(self) -> bool:
         return TOKEN.exists()
@@ -68,15 +81,18 @@ class GCal:
         return build("calendar", "v3", credentials=self._creds(), cache_discovery=False)
 
     # ---------- login ----------
-    def auth_url(self, redirect_uri: str) -> str:
-        self._flow = Flow.from_client_secrets_file(str(SECRET), scopes=SCOPES, redirect_uri=redirect_uri)
+    def auth_url(self) -> str:
+        self._flow = Flow.from_client_secrets_file(str(SECRET), scopes=SCOPES, redirect_uri=REDIRECT_URI)
         url, _ = self._flow.authorization_url(access_type="offline", prompt="consent", include_granted_scopes="true")
         return url
 
-    def finish_auth(self, full_url: str):
+    def finish_auth(self, pasted_url: str):
         if not self._flow:
             raise RuntimeError("Login expirou; clique em Conectar de novo.")
-        self._flow.fetch_token(authorization_response=full_url)
+        pasted_url = pasted_url.strip().replace("127.0.0.1", "localhost")
+        if "code=" not in pasted_url:
+            raise ValueError("O endereco colado nao tem 'code='. Copie a barra de endereco inteira.")
+        self._flow.fetch_token(authorization_response=pasted_url)
         TOKEN.write_text(self._flow.credentials.to_json(), encoding="utf-8")
         self._flow = None
         self.account = None
@@ -107,7 +123,7 @@ class GCal:
 
     def upcoming(self, calendar_ids: list, days: int) -> list:
         svc = self._svc()
-        now = datetime.now().astimezone()
+        now = datetime.now(TZ)
         tmin = now.replace(hour=0, minute=0, second=0, microsecond=0)
         tmax = tmin + timedelta(days=days + 1)
         out = []
@@ -134,8 +150,8 @@ class GCal:
         if start:
             s = datetime.fromisoformat(f"{day}T{start}")
             e = s + timedelta(minutes=minutes)
-            body["start"] = {"dateTime": s.isoformat(), "timeZone": TZ}
-            body["end"] = {"dateTime": e.isoformat(), "timeZone": TZ}
+            body["start"] = {"dateTime": s.isoformat(), "timeZone": TZ_NAME}
+            body["end"] = {"dateTime": e.isoformat(), "timeZone": TZ_NAME}
         else:
             d = date.fromisoformat(day)
             body["start"] = {"date": d.isoformat()}
@@ -144,15 +160,14 @@ class GCal:
 
 
 def _normalize(e: dict, cid: str) -> dict:
-    tz = datetime.now().astimezone().tzinfo
     s, en = e["start"], e["end"]
     if "dateTime" in s:
-        start = datetime.fromisoformat(s["dateTime"]).astimezone(tz)
-        end = datetime.fromisoformat(en["dateTime"]).astimezone(tz)
+        start = datetime.fromisoformat(s["dateTime"]).astimezone(TZ)
+        end = datetime.fromisoformat(en["dateTime"]).astimezone(TZ)
         all_day = False
     else:
-        start = datetime.fromisoformat(s["date"]).replace(tzinfo=tz)
-        end = datetime.fromisoformat(en["date"]).replace(tzinfo=tz)
+        start = datetime.fromisoformat(s["date"]).replace(tzinfo=TZ)
+        end = datetime.fromisoformat(en["date"]).replace(tzinfo=TZ)
         all_day = True
     return {
         "id": e["id"],

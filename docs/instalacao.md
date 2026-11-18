@@ -1,101 +1,98 @@
 # Instalação
 
-## Hardware
+## 1. Servidor no Portainer
 
-A placa é a **ESP32-2432S028R**, vendida como "Cheap Yellow Display" (CYD):
+O Portainer constrói a imagem direto deste repositório (`Dockerfile` +
+`docker-compose.yml`).
 
-| Item | Valor |
-|---|---|
-| Microcontrolador | ESP32-D0WD-V3, dual core 240 MHz, 4 MB de flash |
-| Tela | 2,8" ILI9341, 320×240, SPI |
-| Toque | resistivo XPT2046 (ainda não usado) |
-| USB | conversor CH340 (alguns lotes: CP210x) |
+1. Gere um token longo e aleatório (vale como senha do painel):
 
-Pinagem da tela, já configurada em `firmware/platformio.ini`:
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(24))"
+   ```
 
-| Sinal | GPIO |
-|---|---|
-| MISO / MOSI / SCLK | 12 / 13 / 14 (barramento HSPI) |
-| CS / DC | 15 / 2 |
-| Backlight | 21 (controlado por PWM para o brilho) |
+2. No Portainer: **Stacks → Add stack → Repository**.
+   - **Repository URL:** `https://github.com/duartefilipe/painel-cyd`
+   - **Repository reference:** `refs/heads/main` (ou a branch que quiser)
+   - **Compose path:** `docker-compose.yml`
+   - Repositório privado: ligue **Authentication** e use um token do GitHub *fine-grained*
+     com acesso só de leitura (**Contents: Read**) a este repositório.
+3. Em **Environment variables**, adicione:
 
-> Existe uma variante da CYD com **duas portas USB** (micro-USB + USB-C) que usa a tela
-> **ST7789** em vez da ILI9341. Nela, troque `-DILI9341_2_DRIVER=1` por
-> `-DST7789_DRIVER=1` no `platformio.ini`.
+   | Nome | Valor |
+   |---|---|
+   | `PAINEL_TOKEN` | o token gerado no passo 1 |
+   | `PAINEL_TZ` | opcional, padrão `America/Sao_Paulo` |
 
-### Driver USB
+   > As *Environments* e *Secrets* do GitHub **não** chegam ao Portainer: elas só existem
+   > para o GitHub Actions. O token fica na stack.
 
-O Windows 11 costuma instalar o driver do CH340 sozinho. Se a placa não aparecer em
-**Gerenciador de Dispositivos → Portas (COM e LPT)**, instale o driver CH340 da WCH.
-Cabo USB "só de carga" (sem os fios de dados) também deixa a placa invisível.
+4. **Deploy the stack.** Para atualizar depois de um `git push`, use **Pull and redeploy**
+   na stack, ou ligue **GitOps updates** para o Portainer verificar o repositório sozinho.
 
-## Firmware
+Teste: abra `http://<ip-do-servidor>:8765`. O navegador pede usuário e senha: use
+qualquer usuário e o `PAINEL_TOKEN` como senha.
 
-Precisa do PlatformIO (`pip install platformio`). Na primeira compilação ele baixa as
-ferramentas do ESP32, o que leva alguns minutos.
+Configuração, credencial e token do Google ficam no volume `painel-data` e sobrevivem a
+redeploys.
 
-```bash
+## 2. Firmware na CYD
+
+Precisa do [PlatformIO](https://platformio.org/install/cli) e de um cabo USB **de dados**.
+
+```powershell
 cd firmware
-pio run                 # só compila
-pio run -t upload       # compila e grava
-pio device monitor      # ver o que a placa imprime (115200)
+pio run -t upload
 ```
 
-Se houver mais de uma porta serial no PC, indique a da placa: `pio run -t upload --upload-port COM3`.
+### Configurar Wi-Fi, servidor e token (primeira vez)
 
-> **A porta só aceita um programa por vez.** Se o programa do PC estiver rodando, clique em
-> **Liberar porta** no painel antes de gravar, e em **Retomar** depois.
+1. A placa liga e mostra **Configurar**, com a rede `CYD-Painel` e uma senha de 8
+   dígitos. A senha é sorteada a cada boot e só aparece na tela.
+2. Conecte o celular nessa rede. Se o portal não abrir sozinho, acesse `192.168.4.1`.
+3. **Configure WiFi**: escolha a rede (só **2,4 GHz**), digite a senha e preencha:
+   - **Servidor:** `http://<ip-do-servidor>:8765`
+   - **PAINEL_TOKEN:** o mesmo token da stack
+4. Salve. A placa entra no Wi-Fi e começa a desenhar em ~1 s.
 
-Logo depois de gravar, a tela mostra **"aguardando o PC..."** com um ponto vermelho. É o
-esperado: a placa só desenha os dados quando o programa do PC começa a mandá-los.
+Para reconfigurar: **segure o botão BOOT** e ligue a placa (ou aperte RESET com BOOT
+segurado). Isso apaga Wi-Fi e token e abre o portal de novo.
 
-## Programa do PC
+### Hardware
 
-```bash
-cd pc
+- CYD **ESP32-2432S028** com tela ILI9341 (a pinagem vai por *build flag* no
+  `platformio.ini`).
+- Alguns lotes vêm com as cores invertidas: marque **inverter** no card **Placa** do painel.
+- Variante com controlador ST7789 (tela branca depois de gravar): troque
+  `-DILI9341_2_DRIVER=1` por `-DST7789_DRIVER=1` no `platformio.ini`.
+
+## 3. Agente no PC
+
+O agente só manda CPU/RAM/disco/rede. Sem ele, o servidor considera o PC "desconectado"
+(e o modo automático mostra a tela de PC desconectado).
+
+```powershell
+cd agente
 pip install -r requirements.txt
-python app.py              # abre o navegador em http://localhost:8765
-python app.py --no-browser # sem abrir o navegador
+copy agente.exemplo.json agente.json
 ```
 
-Na primeira execução, ele cria a pasta `data/` com a configuração padrão (cidade: Santa
-Maria, RS). Troque a cidade pelo painel.
-
-A placa é encontrada pelo identificador USB (CH340 `1A86:7523` ou CP210x `10C4:EA60`),
-então trocar de porta USB não exige configurar nada. Se houver outro aparelho com o mesmo
-conversor, escolha a porta manualmente no painel.
+Edite `agente.json` com o endereço do servidor e o `PAINEL_TOKEN`. O arquivo está no
+`.gitignore`. Rode `python agente.py` para testar; o log fica em `agente/agente.log`.
 
 ### Iniciar junto com o Windows
 
-O firmware já fica na placa; o que precisa subir a cada login é o programa do PC. A
-forma mais simples é um atalho na pasta de inicialização, rodando sem janela e **sem
-abrir o navegador**:
+1. `Win + R` → `shell:startup`.
+2. Crie ali um atalho para `agente\iniciar-agente.bat`, que sobe o agente sem janela.
 
-```powershell
-# rodar na raiz do projeto
-$pyw = (Get-Command pythonw).Source
-$lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$([Environment]::GetFolderPath('Startup'))\Painel CYD.lnk")
-$lnk.TargetPath = $pyw
-$lnk.Arguments = 'app.py --no-browser'
-$lnk.WorkingDirectory = "$PWD\pc"
-$lnk.WindowStyle = 7
-$lnk.Save()
-```
+### Linux
 
-Ou à mão: `Win + R` → `shell:startup` → crie um atalho para o `iniciar.bat` (este abre o
-navegador a cada login).
+`bash agente/iniciar-agente.sh`, ou um serviço de usuário do systemd com
+`ExecStart=/usr/bin/python3 /caminho/agente/agente.py`.
 
-- **Abrir o painel:** duplo clique em `iniciar.bat`. Com o programa já rodando, ele só abre
-  o navegador; nunca sobe uma segunda cópia brigando pela porta COM.
-- **Parar:** Gerenciador de Tarefas → `pythonw.exe` → Finalizar tarefa.
-- **Tirar da inicialização:** apague `Painel CYD` em `shell:startup`.
-- **Log:** `data/painel.log`.
+## Migrando da versão USB
 
-## Ajustes de tela
-
-No card **Placa** do painel, sem precisar regravar o firmware:
-
-- **Brilho:** de 10 a 255.
-- **Inverter cores:** alguns lotes da CYD saem de fábrica com o painel em negativo (fundo
-  claro, cores trocadas).
-- **Girar 180°:** para a placa em pé com o USB para o outro lado.
+1. Encerre o programa antigo (`pythonw app.py`) e tire o atalho dele de `shell:startup`.
+2. Leve o login do Google: no painel novo, card **Google Agenda**, envie o
+   `client_secret.json` e o `token.json` da pasta `data/` do PC.
+3. A cidade e as agendas escolhidas não migram sozinhas: escolha de novo no painel.

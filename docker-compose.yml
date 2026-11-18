@@ -1,0 +1,18 @@
+# Stack do Portainer: Stacks > Add stack > Repository, apontando para este repo.
+# Defina PAINEL_TOKEN em "Environment variables" da stack (NAO no git).
+services:
+  painel-cyd:
+    build: .
+    image: painel-cyd:latest
+    container_name: painel-cyd
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      PAINEL_TOKEN: ${PAINEL_TOKEN:?defina PAINEL_TOKEN nas variaveis da stack}
+      PAINEL_TZ: ${PAINEL_TZ:-America/Sao_Paulo}
+    volumes:
+      - painel-data:/data
+
+volumes:
+  painel-data:
