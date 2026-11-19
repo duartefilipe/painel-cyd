@@ -67,11 +67,17 @@
   .screen-wrap > .screen { margin: 0 auto; }  /* margin auto: centraliza sem cortar a esquerda quando sobra pouco espaco */
   .screen { --k: 1.6; width: calc(320px * var(--k)); height: calc(240px * var(--k)); background: #0c0e12; border: 10px solid #2b2b2b; border-radius: 6px; font-family: "Consolas", monospace; color: #e8eaee; flex: none; overflow: hidden; font-size: calc(9.5px * var(--k)); box-sizing: content-box; }
   .screen.mini { --k: 0.95; border-width: 6px; }
-  .screen .hdr { height: calc(28px * var(--k)); display: flex; align-items: center; padding: 0 calc(8px * var(--k)); border-bottom: 1px solid #2c323e; gap: 6px; }
+  /* Visual integrado (igual ao firmware): fundo unico e cartoes arredondados, sem divisorias */
+  .screen { background: #0a0c11; }
+  .screen .hdr { height: calc(28px * var(--k)); display: flex; align-items: center; padding: 0 calc(10px * var(--k)); gap: 6px; }
   .screen .hdr .clock { margin-left: auto; font-size: calc(19px * var(--k)); }
-  .screen .mid { display: grid; grid-template-columns: 1fr 1fr; height: calc(124px * var(--k)); }
-  .screen .col { padding: calc(4px * var(--k)) calc(8px * var(--k)); position: relative; min-width: 0; }
-  .screen .col + .col { border-left: 1px solid #2c323e; }
+  .screen .mid { display: grid; grid-template-columns: 1fr 1fr; gap: calc(6px * var(--k)); padding: 0 calc(6px * var(--k)); height: calc(124px * var(--k)); }
+  .screen .col { padding: calc(6px * var(--k)) calc(8px * var(--k)); position: relative; min-width: 0; background: #181c25; border-radius: calc(9px * var(--k)); height: calc(120px * var(--k)); }
+  .screen .col.empty { background: transparent; }
+  .screen .note { margin: 0 calc(6px * var(--k)); height: calc(120px * var(--k)); border-radius: calc(10px * var(--k)); background: #181c25; border: 1px solid; display: flex; align-items: center; gap: calc(12px * var(--k)); padding: 0 calc(14px * var(--k)); font-size: 1.35em; position: relative; }
+  .screen .note canvas { width: calc(32px * var(--k)); height: calc(32px * var(--k)); image-rendering: pixelated; flex: none; }
+  .screen .note small { position: absolute; right: calc(10px * var(--k)); bottom: calc(5px * var(--k)); font-size: .5em; color: #828a98; }
+  .screen .wd div { display: flex; justify-content: space-between; margin: calc(5px * var(--k)) 0; }
   .screen .t { color: #828a98; }
   .screen .spark { height: calc(34px * var(--k)); background: #222630; display: flex; align-items: flex-end; margin: 4px 0; }
   .screen .spark i { flex: 1; background: #6e3e16; border-top: 2px solid var(--accent); }
@@ -82,7 +88,8 @@
   .screen .hours { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; margin-top: 4px; }
   .screen .fx div { display: grid; grid-template-columns: 2.6em 1fr 3.6em; margin: calc(5px * var(--k)) 0; align-items: baseline; }
   .screen .fx b { font-weight: normal; font-size: 1.25em; }
-  .screen .agenda { padding: calc(4px * var(--k)) calc(8px * var(--k)); border-top: 1px solid #2c323e; height: calc(88px * var(--k)); }
+  .screen .agenda { padding: calc(5px * var(--k)) calc(8px * var(--k)); margin: 0 calc(6px * var(--k)); background: #181c25; border-radius: calc(9px * var(--k)); height: calc(84px * var(--k)); box-sizing: border-box; }
+  .screen .agenda.empty { background: transparent; }
   .screen .agenda div { display: flex; gap: 10px; height: calc(16px * var(--k)); align-items: center; }
   .screen .agenda .w { color: var(--blue); width: 9em; flex: none; }
   .screen .agenda .now .w { color: var(--accent); }
@@ -186,6 +193,41 @@
     <div class="row"><label>Brilho</label><input type="range" id="brightness" min="10" max="255"><span id="br-v" class="muted"></span></div>
     <div class="row"><label>Cores</label><label style="min-width:0"><input type="checkbox" id="invert"> inverter (se aparecer negativo)</label></div>
     <div class="row"><label>Rotacao</label><label style="min-width:0"><input type="checkbox" id="rotation"> girar 180°</label></div>
+    <p class="muted" style="margin:10px 0 0;font-size:12px"><b>Toque na tela:</b> toque curto fecha o aviso, pula para o proximo app (pixel) ou troca de tela por
+      <input type="number" id="touch-min" min="1" max="240" style="width:56px;padding:2px 6px"> min. Segurar 1 s: volta ao automatico (no pixel, troca de tela).</p>
+  </section>
+
+  <section class="card">
+    <h2>Brilho automatico</h2>
+    <div class="row"><label style="min-width:0"><input type="checkbox" id="ab-on"> ajustar pelo sensor de luz da placa</label></div>
+    <div class="row"><label>Sensor agora</label><b id="ldr-now">—</b><span class="muted" id="ldr-hint"></span></div>
+    <div class="row"><label>Escuro</label><input type="number" id="ldr-dark" min="0" max="4095" style="width:80px"><button id="ldr-set-dark">Usar leitura atual</button></div>
+    <div class="row"><label>Claro</label><input type="number" id="ldr-bright" min="0" max="4095" style="width:80px"><button id="ldr-set-bright">Usar leitura atual</button></div>
+    <div class="row"><label>Brilho min</label><input type="range" id="br-min" min="0" max="255"><span id="br-min-v" class="muted"></span></div>
+    <div class="row"><label>Brilho max</label><input type="range" id="br-max" min="10" max="255"><span id="br-max-v" class="muted"></span></div>
+    <p class="muted" style="margin:6px 0 0;font-size:12px">Calibre com o ambiente escuro e depois claro (cubra/ilumine o sensor na frente da placa). Agora: brilho <b id="br-applied">—</b>.</p>
+  </section>
+
+  <section class="card">
+    <h2>Horarios</h2>
+    <div class="row"><label style="min-width:0"><input type="checkbox" id="sch-on"> usar horarios</label><span class="muted" id="sch-now"></span></div>
+    <div id="sch-rules" class="apps"></div>
+    <div class="row"><button id="sch-add">+ Regra</button><button class="primary" id="sch-save" style="display:none">Salvar horarios</button></div>
+    <p class="muted" style="margin:6px 0 0;font-size:12px">A primeira regra que vale no horario escolhe a tela e/ou o brilho, ou apaga a tela. Um toque acende a tela apagada.</p>
+  </section>
+
+  <section class="card">
+    <h2>Avisos na tela</h2>
+    <div class="row"><input id="nt-text" placeholder="Texto do aviso" maxlength="80" style="flex:1"></div>
+    <div class="row">
+      <select id="nt-icon" title="Icone"></select>
+      <input type="color" id="nt-color" value="#50c878" title="Cor" style="width:40px;height:32px;padding:2px">
+      <input type="number" id="nt-dur" value="15" min="3" max="3600" title="Segundos na tela" style="width:70px"><span class="muted">s</span>
+      <button class="primary" id="nt-send">Enviar</button><button id="nt-clear">Limpar</button>
+    </div>
+    <div id="nt-list" class="muted" style="font-size:12px"></div>
+    <p class="muted" style="margin:8px 0 4px;font-size:12px">De qualquer script ou ferramenta da rede:</p>
+    <code style="display:block;white-space:pre-wrap;font-size:11px;padding:8px" id="nt-curl"></code>
   </section>
 
   <section class="card">
@@ -231,10 +273,10 @@ const $ = (id) => document.getElementById(id);
 let S = null, calendars = null, settingsLoaded = false;
 let draft = null, dirty = false;   // copia editavel das telas
 
-const WIDGETS_HALF = { sys: "Sistema do PC", w: "Tempo", fx: "Cotacoes", none: "(vazio)" };
+const WIDGETS_HALF = { sys: "Sistema do PC", w: "Tempo", wd: "Tempo detalhado", fx: "Cotacoes", none: "(vazio)" };
 const WIDGETS_BOTTOM = { ev: "Agenda", none: "(vazio)" };
 const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa", pixel: "Relogio pixel (LEDs)" };
-const APP_TYPES = { clock: "Hora", date: "Data", weather: "Tempo", quote: "Cotacao", event: "Prox. compromisso", cpu: "CPU do PC", text: "Texto livre" };
+const APP_TYPES = { clock: "Hora", date: "Data", weather: "Tempo", rain: "Chance de chuva", humidity: "Umidade", sun: "Nascer/por do sol", tomorrow: "Previsao amanha", quote: "Cotacao", event: "Prox. compromisso", cpu: "CPU do PC", text: "Texto livre" };
 const TRANS = { slide: "Deslizar", none: "Corte seco" };
 const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", rain: "Noite de chuva", sunset: "Synthwave", snow: "Nevasca", aurora: "Aurora boreal", none: "Sem animacao" };
 const FONTS = { pixel: "Pixel", dots: "LED redondo", segment: "7 segmentos", arcade: "Arcade 5x7", clean: "Lisa 5x7" };
@@ -278,10 +320,20 @@ function widget(kind, p) {
   if (kind === "w") {
     const w = p.w;
     if (!w.ok) return `<div class="t">${esc(w.city)}</div><div class="t" style="margin-top:1.5em">sem previsao</div>`;
-    return `<div class="t">${esc(w.city)}</div>
+    return `<div style="display:flex"><span class="t">${esc(w.city)}</span><span class="t" style="margin-left:auto">💧${w.hu ?? ""}%</span></div>
       <div style="display:flex;align-items:center;gap:10px"><span style="font-size:2.4em">${ICON[w.ic] || ""}</span>
-      <div><div class="big">${w.tc}°C</div><div class="t">${w.mn}° / ${w.mx}°</div></div></div>
-      <div class="hours">${w.h.map((h) => `<div><div class="t">${h[0]}</div><div>${ICON[h[2]] || ""}</div><div>${h[1]}°</div></div>`).join("")}</div>`;
+      <div><div class="big">${w.tc}°C</div><div class="t">${w.mn}°/${w.mx}° <span style="color:var(--blue)">${w.rx ?? 0}%</span></div></div></div>
+      <div class="hours">${w.h.map((h) => `<div><div class="t">${h[0]}</div><div>${ICON[h[2]] || ""}</div><div>${h[1]}°</div><div style="color:var(--blue);font-size:.8em;height:1em">${h[3] >= 10 ? h[3] + "%" : ""}</div></div>`).join("")}</div>`;
+  }
+  if (kind === "wd") {
+    const w = p.w;
+    if (!w.ok) return `<div class="t">DETALHES</div><div class="t" style="margin-top:1.5em">sem previsao</div>`;
+    const tm = w.tm || [0, 0, "C", 0];
+    return `<div class="t">DETALHES</div><div class="wd">
+      <div><span class="t">💧 umidade</span><span>${w.hu}%</span></div>
+      <div><span class="t">🌧 chuva</span><span>${w.rp}% / ${w.rx}%</span></div>
+      <div><span class="t">🌅 sol</span><span>${esc(w.sr)} ${esc(w.ss)}</span></div>
+      <div><span class="t">${ICON[tm[2]] || ""} amanha</span><span>${tm[0]}/${tm[1]} ${tm[3]}%</span></div></div>`;
   }
   if (kind === "fx") {
     const f = p.fx;
@@ -550,6 +602,13 @@ function appsLocal(s) {
     else if (a.type === "event") { const e = S.events[0]; if (!e) continue; text = `${e.label} ${e.title}`; }
     else if (a.type === "cpu") { if (!S.pc.online || !S.sys) continue; text = `${Math.round(S.sys.cpu)}%`; }
     else if (a.type === "text") text = a.text || "";
+    else if (["rain", "humidity", "sun", "tomorrow"].includes(a.type)) {  // mesma regra de pixel_apps() no servidor
+      const w = S.weather; if (!w) continue;
+      if (a.type === "rain") { text = `${w.rain || 0}% (${w.rain_max || 0}%)`; auto = "rain"; }
+      else if (a.type === "humidity") { text = `${w.hum || 0}%`; auto = "drop"; }
+      else if (a.type === "sun") { const hm = now.toTimeString().slice(0, 5); [text, auto] = w.sunrise && hm < w.sunrise ? [w.sunrise, "sunrise"] : [w.sunset || "", "sunset"]; }
+      else { const tm = w.tomorrow || {}; text = `${tm.mn || 0}/${tm.mx || 0}~ ${tm.rain || 0}%`; auto = WI[tm.ic] || "cloud"; }
+    }
     out.push([a.icon === "auto" || !a.icon ? auto : a.icon, hexTo565(a.color || "#ffffff"), +a.dur || 6, clk, clean(text)]);
   }
   return out;
@@ -572,10 +631,18 @@ function renderScreen(el, p, live) {
   const ev = p.ev;
   el.innerHTML = `
     <div class="hdr"><span class="dot ${live ? (stale ? "bad" : "good") : "good"}"></span><span>${stale ? "placa offline" : esc(p.d)}</span><span class="clock">${esc(p.t)}</span></div>
-    <div class="mid"><div class="col">${widget(p.lay.l, p)}</div><div class="col">${widget(p.lay.r, p)}</div></div>
+    ${p.nt ? `<div class="note" style="border-color:${c565(p.nt.c)};color:${c565(p.nt.c)}"><canvas width="8" height="8" data-icon="${esc(p.nt.ic)}"></canvas><span>${esc(p.nt.tx)}</span><small>toque para fechar</small></div>`
+      : `<div class="mid"><div class="col ${p.lay.l === "none" ? "empty" : ""}">${widget(p.lay.l, p)}</div><div class="col ${p.lay.r === "none" ? "empty" : ""}">${widget(p.lay.r, p)}</div></div>`}
     ${p.lay.b === "ev" ? `<div class="agenda"><span class="t">AGENDA</span>
-      ${ev.st === "ok" && ev.l.length ? ev.l.map((e) => `<div class="${e[2] ? "now" : ""}"><span class="w">${esc(e[0])}</span><span>${esc(e[1])}</span></div>`).join("")
-        : `<div class="t">${esc(ev.msg || "nada nos proximos dias")}</div>`}</div>` : `<div class="agenda"></div>`}`;
+      ${ev.st === "ok" && ev.l.length ? ev.l.slice(0, 3).map((e) => `<div class="${e[2] ? "now" : ""}"><span class="w">${esc(e[0])}</span><span>${esc(e[1])}</span></div>`).join("")
+        : `<div class="t">${esc(ev.msg || "nada nos proximos dias")}</div>`}</div>` : `<div class="agenda empty"></div>`}`;
+  el.querySelectorAll("canvas[data-icon]").forEach(iconCanvas);
+}
+// Desenha um icone 8x8 da fonte pixelada num canvas 8x8 (ampliado pelo CSS).
+function iconCanvas(cv) {
+  const ic = PX?.icons[cv.dataset.icon]; if (!ic) return;
+  const ctx = cv.getContext("2d");
+  ic.forEach((c, i) => { if (c) { ctx.fillStyle = c; ctx.fillRect(i % 8, (i / 8) | 0, 1, 1); } });
 }
 
 // ---------- telas ----------
@@ -779,13 +846,97 @@ $("brightness").onchange = () => post("/api/config", { brightness: +$("brightnes
 $("invert").onchange = () => post("/api/config", { invert: $("invert").checked ? 1 : 0 });
 $("rotation").onchange = () => post("/api/config", { rotation: $("rotation").checked ? 3 : 1 });
 
+// ---------- brilho automatico ----------
+function renderLight() {
+  const li = S.config.light, ldr = S.device.ldr, D = S.display;
+  $("ldr-now").textContent = ldr ?? "—";
+  $("ldr-hint").textContent = ldr == null ? "(placa ainda nao enviou; precisa do firmware novo)" : "(0-4095)";
+  $("br-applied").textContent = D.off ? "tela apagada (horario)" : D.ab ? `automatico ${D.bm}-${D.bx}` : D.br;
+  if (!renderLight.done) {
+    renderLight.done = true;
+    $("ab-on").checked = !!li.auto; $("ldr-dark").value = li.dark; $("ldr-bright").value = li.bright;
+    $("br-min").value = li.min; $("br-min-v").textContent = li.min; $("br-max").value = li.max; $("br-max-v").textContent = li.max;
+    $("touch-min").value = S.config.touch_minutes;
+  }
+}
+const saveLight = (patch) => post("/api/config", { light: patch }).then(() => toast("Brilho salvo"));
+$("ab-on").onchange = () => saveLight({ auto: $("ab-on").checked });
+$("ldr-dark").onchange = () => saveLight({ dark: +$("ldr-dark").value });
+$("ldr-bright").onchange = () => saveLight({ bright: +$("ldr-bright").value });
+$("ldr-set-dark").onclick = () => { if (S.device.ldr == null) return toast("Sem leitura da placa"); $("ldr-dark").value = S.device.ldr; saveLight({ dark: S.device.ldr }); };
+$("ldr-set-bright").onclick = () => { if (S.device.ldr == null) return toast("Sem leitura da placa"); $("ldr-bright").value = S.device.ldr; saveLight({ bright: S.device.ldr }); };
+for (const k of ["min", "max"]) {
+  $("br-" + k).oninput = () => { $(`br-${k}-v`).textContent = $("br-" + k).value; };
+  $("br-" + k).onchange = () => saveLight({ [k]: +$("br-" + k).value });
+}
+$("touch-min").onchange = () => post("/api/config", { touch_minutes: +$("touch-min").value }).then(() => toast("Salvo"));
+
+// ---------- horarios ----------
+let schDraft = null, schDirty = false;
+function renderSchedule() {
+  const sc = S.config.schedule;
+  $("sch-on").checked = !!sc.enabled;
+  const r = S.rule;
+  $("sch-now").textContent = !sc.enabled ? "" : r ? `agora: ${r.from}-${r.to}${r.off ? " (apagada)" : ""}` : "agora: nenhuma regra";
+  if (schDirty && schDraft) return;
+  const j = JSON.stringify(sc.rules);
+  if (renderSchedule.last === j) return;
+  renderSchedule.last = j;
+  schDraft = JSON.parse(j);
+  drawRules();
+}
+function drawRules() {
+  const scr = { "": "(manter a tela)", ...Object.fromEntries(S.config.screens.map((s) => [s.id, s.name])) };
+  $("sch-rules").innerHTML = schDraft.map((r, i) => `<div class="app" data-i="${i}">
+      <input type="time" data-r="from" value="${esc(r.from)}"> <span class="muted">ate</span> <input type="time" data-r="to" value="${esc(r.to)}">
+      <select data-r="screen">${opts(scr, r.screen || "")}</select>
+      <input type="number" data-r="brightness" min="-1" max="255" value="${r.brightness ?? -1}" title="Brilho fixo (-1 = nao muda)" style="width:60px">
+      <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-r="off" ${r.off ? "checked" : ""}> apagar</label>
+      <span class="mv"><button class="ghost" data-rm title="Remover">✕</button></span></div>`).join("") || `<span class="muted">Nenhuma regra.</span>`;
+  $("sch-rules").querySelectorAll(".app").forEach((row) => {
+    const r = schDraft[+row.dataset.i];
+    row.querySelectorAll("[data-r]").forEach((inp) => (inp.oninput = () => {
+      r[inp.dataset.r] = inp.type === "checkbox" ? inp.checked : inp.type === "number" ? +inp.value : inp.value;
+      schDirty = true; $("sch-save").style.display = "";
+    }));
+    row.querySelector("[data-rm]").onclick = () => { schDraft.splice(+row.dataset.i, 1); schDirty = true; $("sch-save").style.display = ""; drawRules(); };
+  });
+}
+$("sch-on").onchange = () => post("/api/config", { schedule: { enabled: $("sch-on").checked } }).then(() => { toast("Horarios " + ($("sch-on").checked ? "ligados" : "desligados")); refresh(); });
+$("sch-add").onclick = () => { schDraft.push({ from: "22:00", to: "07:00", screen: "", brightness: 30, off: false }); schDirty = true; $("sch-save").style.display = ""; drawRules(); };
+$("sch-save").onclick = async () => {
+  try {
+    await post("/api/config", { schedule: { rules: schDraft } });
+    schDirty = false; $("sch-save").style.display = "none"; renderSchedule.last = null; toast("Horarios salvos"); refresh();
+  } catch (e) { toast(e.message); }
+};
+
+// ---------- avisos ----------
+function renderNotes() {
+  if (!$("nt-icon").options.length) {
+    $("nt-icon").innerHTML = S.icons.map((n) => `<option ${n === "bell" ? "selected" : ""}>${n}</option>`).join("");
+    $("nt-curl").textContent = `curl -X POST ${location.origin}/api/notify \\\n  -H "Authorization: Bearer $PAINEL_TOKEN" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Scan terminou","icon":"check","color":"#50c878","dur":30}'`;
+  }
+  $("nt-list").innerHTML = S.notes.length
+    ? "Na fila: " + S.notes.map((n) => `<b>${esc(n.text)}</b> (${Math.max(0, Math.round(n.until - S.now))}s)`).join(" · ")
+    : "Nenhum aviso ativo.";
+}
+$("nt-send").onclick = async () => {
+  try {
+    await post("/api/notify", { text: $("nt-text").value, icon: $("nt-icon").value, color: $("nt-color").value, dur: +$("nt-dur").value });
+    $("nt-text").value = ""; toast("Aviso enviado"); refresh();
+  } catch (e) { toast(e.message); }
+};
+$("nt-clear").onclick = () => api("/api/notify", { method: "DELETE" }).then(() => { toast("Avisos limpos"); refresh(); });
+
 // ---------- tempo ----------
 function renderWeather() {
   const w = S.weather, c = S.config.city;
   $("city").textContent = `${c.name}${c.admin ? " — " + c.admin : ""}`;
   if (w) {
     $("weather-now").innerHTML = `<div style="font-size:28px">${ICON[w.ic] || ""} ${w.tc}°C <span class="muted" style="font-size:14px">${esc(w.desc)}, umidade ${w.hum ?? "?"}%</span></div>
-      <div class="muted">Hoje ${w.mn}° a ${w.mx}° · atualizado ${ago(S.weather_at)}</div>`;
+      <div class="muted">Hoje ${w.mn}° a ${w.mx}° · chuva ${w.rain ?? 0}% agora, ${w.rain_max ?? 0}% no dia · sol ${esc(w.sunrise || "")}–${esc(w.sunset || "")}</div>
+      <div class="muted">Amanha ${ICON[w.tomorrow?.ic] || ""} ${w.tomorrow?.mn ?? ""}° a ${w.tomorrow?.mx ?? ""}°, chuva ${w.tomorrow?.rain ?? 0}% · atualizado ${ago(S.weather_at)}</div>`;
   } else $("weather-now").innerHTML = `<span class="${S.weather_err ? "err" : "muted"}">${esc(S.weather_err || "Buscando previsao...")}</span>`;
   setDot("p-weather", w && !S.weather_err ? "good" : S.weather_err ? "bad" : "", w ? `Tempo: ${w.tc}°C` : "Tempo");
 }
@@ -924,7 +1075,7 @@ async function refresh() {
   const act = S.config.screens.find((s) => s.id === S.active);
   $("now-name").textContent = act ? `· ${act.name} (${S.config.display.mode === "auto" ? "automatico" : "manual"})` : "";
   renderScreen($("screen"), S.payloads[S.active], true);
-  renderScreens(); renderBoard(); renderWeather(); renderQuotes(); renderGoogle(); renderEvents();
+  renderScreens(); renderBoard(); renderLight(); renderSchedule(); renderNotes(); renderWeather(); renderQuotes(); renderGoogle(); renderEvents();
   settingsLoaded = true;
 }
 api("/api/pixel_assets").then((j) => { PX = j; $("screens").innerHTML = ""; if (S) renderScreens(); }).catch(() => {});

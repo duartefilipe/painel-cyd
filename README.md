@@ -7,7 +7,8 @@ depende do PC: com o PC desligado ela continua mostrando informação, só troca
 Widgets disponíveis:
 
 - **Sistema do PC:** CPU com histórico de 72 s, memória, disco e rede (vem do agente do PC)
-- **Tempo:** agora, mínima e máxima do dia e as próximas 4 horas (Open-Meteo)
+- **Tempo:** agora, mínima e máxima do dia e as próximas 4 horas com chance de chuva (Open-Meteo)
+- **Tempo detalhado:** umidade, chuva agora e no dia, nascer e pôr do sol, previsão de amanhã
 - **Cotações:** até 4 pares em reais, com variação do dia (USD, EUR, BTC... via AwesomeAPI)
 - **Agenda:** os 4 próximos compromissos do Google Agenda
 
@@ -27,6 +28,18 @@ Além da tela em regiões, uma tela pode ser:
 - **Relógio pixel (matriz 32×8):** simula um painel de LEDs 32×8 (estilo Ulanzi/AWTRIX)
   com uma sequência de "apps" (hora, data, tempo, cotação, agenda, CPU, texto) que se
   alternam deslizando.
+
+A tela em regiões usa um visual integrado: fundo único e cada informação num cartão
+arredondado, sem linhas dividindo a tela.
+
+Também:
+
+- **Avisos:** qualquer script da rede manda uma mensagem com ícone e cor por cima de
+  qualquer tela (`POST /api/notify`). Ex.: "scan terminou", "build quebrou".
+- **Toque na tela:** toque curto fecha o aviso, pula o app (pixel) ou troca de tela;
+  segurar 1 s volta ao automático.
+- **Brilho automático** pelo sensor de luz da CYD, calibrado no painel.
+- **Horários:** regras como "das 22:00 às 07:00, tela Relógio com brilho 30" ou "apagar a tela".
 
 Depois da primeira gravação pelo USB, o firmware pode ser atualizado **pelo Wi-Fi**
 ([OTA](docs/instalacao.md#atualizar-o-firmware-pelo-wi-fi-ota)).

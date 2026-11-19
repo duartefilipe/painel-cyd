@@ -92,6 +92,23 @@ caracteres), o servidor nem sobe.
 | `/api/google/disconnect` | POST | painel | apaga o token |
 | `/api/calendars` | GET | painel | agendas da conta |
 | `/api/events` | POST | painel | cria evento `{title, date, time?, minutes, calendar}` |
+| `/api/notify` | POST | scripts | aviso `{text, icon?, color?, dur?}` por cima da tela (até 5 na fila; `dur` 3–3600 s) |
+| `/api/notify` | GET / DELETE | painel | lista / limpa os avisos ativos |
+| `/api/touch` | POST | placa | toque `{a}`: `next` (próxima tela por `touch_minutes`), `wake` (acende tela apagada), `auto`, `dismiss` (fecha o aviso) |
+
+`/api/screen?ldr=<0-4095>`: a placa manda a leitura do sensor de luz a cada pedido; o painel
+mostra ao vivo para calibrar o brilho automático.
+
+### Prioridade da tela e do brilho
+
+1. **Toque** (`override`, temporário): vale por `touch_minutes` e acende a tela mesmo num horário "apagar".
+2. **Regra de horário** (`schedule.rules`, a primeira que vale no momento; `de`/`ate` podem passar da meia-noite):
+   escolhe tela, brilho fixo (`brightness` ≥ 0, ignora o automático) ou apaga (`off`).
+3. **Modo** automático (PC conectado/desconectado) ou manual.
+
+Brilho na placa: apagado pelo horário → 0; automático → interpola entre `light.min` e
+`light.max` conforme a leitura do LDR entre `light.dark` e `light.bright` (funciona em
+qualquer sentido do sensor); senão o brilho manual. Muda aos poucos, sem salto.
 
 ## Formato da tela (`GET /api/screen`)
 

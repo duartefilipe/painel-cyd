@@ -50,6 +50,14 @@ DEFAULTS = {
     "pc_timeout": 10,        # segundos sem metricas do agente = PC desconectado
     # Ate 4 pares exibidos no bloco de cotacoes (ver quotes.KNOWN).
     "quotes": ["USD-BRL", "EUR-BRL", "BTC-BRL"],
+    # Brilho automatico pelo sensor de luz (LDR) da CYD. "dark"/"bright" sao leituras
+    # brutas do sensor (0-4095) calibradas pelo painel; min/max sao o brilho (0-255).
+    "light": {"auto": False, "dark": 3000, "bright": 300, "min": 15, "max": 255},
+    # Horarios: a primeira regra que vale agora escolhe a tela e/ou o brilho, ou apaga a tela.
+    #   {"from": "22:00", "to": "07:00", "screen": "<id ou vazio>", "brightness": -1..255, "off": false}
+    "schedule": {"enabled": False, "rules": []},
+    # Toque na tela: troca de tela por este tempo e depois volta ao automatico.
+    "touch_minutes": 15,
 }
 
 _lock = threading.Lock()
