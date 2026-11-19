@@ -49,7 +49,8 @@ SLOT_HALF = {"sys", "w", "wd", "fx", "none"}   # wd = tempo detalhado
 SLOT_BOTTOM = {"ev", "none"}
 # grid = 3 regioes; clock = relogio de mesa (animacao em tela cheia + hora pixelada);
 # pixel = faixa de LEDs 32x8 com "apps" que se alternam
-KINDS = {"grid", "clock", "pixel"}
+# station = estacao do tempo (ilustracao animada + hora em 7 segmentos + umidade/temperatura grandes)
+KINDS = {"grid", "clock", "pixel", "station"}
 SCENES = {"aquarium", "stars", "matrix", "fire", "rain", "sunset", "snow", "aurora", "none"}   # animacao de fundo do relogio
 FONTS = {"pixel": 0, "dots": 1, "segment": 2, "arcade": 3, "clean": 4}
 APP_TYPES = {"clock", "date", "weather", "quote", "event", "cpu", "text", "rain", "sun", "tomorrow", "humidity"}
@@ -364,6 +365,8 @@ def build_payload(screen: dict | None = None) -> dict:
     # O relogio de mesa mostra tempo e proximo compromisso; o pixel monta os proprios textos.
     if kind == "clock":
         slots = {"w", "ev"}
+    elif kind == "station":
+        slots = {"w"}
     elif kind == "pixel":
         slots = set()
     else:
@@ -382,6 +385,14 @@ def build_payload(screen: dict | None = None) -> dict:
                "ds": int(scr.get("dsize", 3)), "dx": int(scr.get("dx", 12)), "dy": int(scr.get("dy", 88)),
                "ws": int(scr.get("wsize", 3)), "wx": int(scr.get("wx", 238)), "wy": int(scr.get("wy", 88)),
                "es": int(scr.get("esize", 3)), "ex": int(scr.get("ex", 12)), "ey": int(scr.get("ey", 110))}
+    elif kind == "station":
+        lay = {"n": ascii_text(scr["name"], 14), "f": "station",
+               "col": hex565(scr.get("color", "#ffffff")),     # hora
+               "col2": hex565(scr.get("color2", "#5ad2ff")),   # umidade e temperatura
+               "fn": FONTS.get(scr.get("font", "segment"), 2),
+               "sec": 1 if scr.get("seconds", True) else 0,
+               # dia da semana de 0 (domingo) a 6, para destacar na fileira DOM..SAB
+               "wd": (now.weekday() + 1) % 7}
     elif kind == "pixel":
         lay = {"n": ascii_text(scr["name"], 14), "f": "pixel", "tr": scr.get("trans", "slide"),
                "a": pixel_apps(scr, cfg, now, online)}
@@ -408,6 +419,7 @@ def build_payload(screen: dict | None = None) -> dict:
             tm = w.get("tomorrow") or {}
             p["w"] = {
                 "ok": 1, "city": ascii_text(cfg["city"]["name"], 22), "tc": w["tc"], "ic": w["ic"],
+                "td": w.get("tcd", w["tc"]),  # temperatura com uma casa decimal
                 "day": w["day"], "mn": w["mn"], "mx": w["mx"],
                 # detalhes: umidade, chuva agora / maxima do dia, nascer e por do sol, amanha
                 "hu": w.get("hum") or 0, "rp": w.get("rain") or 0, "rx": w.get("rain_max") or 0,
@@ -506,6 +518,7 @@ def clean_screens(screens) -> list:
             "ey": _clamp(s.get("ey", 110), 0, 228, 110),
             "trans": s.get("trans") if s.get("trans") in TRANSITIONS else "slide",
             "apps": clean_apps(s.get("apps")),
+            "color2": clean_hex(s.get("color2"), "#5ad2ff"),
         })
     if not out:
         raise ValueError("Precisa existir pelo menos uma tela")

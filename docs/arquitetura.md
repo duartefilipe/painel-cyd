@@ -57,6 +57,12 @@ no pixel) que só existe nos modos animados. O relógio anda sozinho a partir do
 (segundos locais desde 1970). Por isso, nesses modos a placa pede dados só a cada 4 s:
 cada pedido HTTP congela a animação por alguns milissegundos.
 
+Uma tela `kind: "station"` é a **estação do tempo**, animada no firmware (`stationFrame`,
+sprite de tela cheia em 8 bits): ilustração do tempo de agora no canto (`stationArt`), hora
+em 7 segmentos (ou outra fonte, `font`), fileira DOM–SAB com o dia de hoje (`lay.wd`, 0 =
+domingo), umidade e temperatura com uma casa decimal (`w.td`). Cores: `color` (hora) e
+`color2` (números).
+
 `display.mode`:
 
 - `auto`: o PC está **conectado** se o agente mandou métricas nos últimos `pc_timeout`

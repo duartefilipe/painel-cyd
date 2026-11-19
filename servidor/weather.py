@@ -71,6 +71,7 @@ def fetch(lat: float, lon: float) -> dict:
     hm = lambda s: s[11:16] if s else ""  # "2026-11-19T05:58" -> "05:58"
     return {
         "tc": round(cur["temperature_2m"]),
+        "tcd": round(cur["temperature_2m"], 1),
         "hum": cur.get("relative_humidity_2m"),
         "ic": ic,
         "desc": DESC.get(ic, ""),
