@@ -118,7 +118,11 @@ bool wasStale = true;
 // ---------- modos animados ----------
 // GRID: 3 regioes (redesenha a cada resposta). CLOCK: relogio de mesa, animacao em tela
 // cheia com hora pixelada por cima. PIXEL: faixa de LEDs 32x8 com apps se alternando.
-enum Mode { M_GRID, M_CLOCK, M_PIXEL };
+// STATION: estacao do tempo (ilustracao animada, hora 7 segmentos, umidade/temperatura grandes).
+enum Mode { M_GRID, M_CLOCK, M_PIXEL, M_STATION };
+uint16_t stCol = 0xFFFF, stCol2 = 0x5E9F;  // hora; umidade e temperatura
+int stFont = 2, stWday = 0;
+float stTd = 0;                            // temperatura com uma casa decimal
 Mode mode = M_GRID;
 char sceneName[10] = "";
 bool showSec = true;
@@ -588,6 +592,19 @@ const char* weatherIconName(char ic, bool day) {
 
 // Relogio de mesa: quadro da animacao + informacoes pixeladas por cima, no mesmo sprite
 // (tela cheia, 8 bits), enviado de uma vez para nao piscar.
+// Aviso: faixa escura embaixo, com icone e texto rolando (relogio de mesa e estacao).
+void drawNoteBanner(TFT_eSprite& s) {
+  if (!ntOn) return;
+  const int by = 172, bh = 56;
+  s.fillRoundRect(8, by, W - 16, bh, 10, TFT_BLACK);
+  s.drawRoundRect(8, by, W - 16, bh, 10, ntCol);
+  pxIconBig(s, ntIc, 18, by + 12, 4);
+  const int x0 = 60, x1 = W - 16, k = 3;
+  int tw = pxTextW(ntTx, k, 0), avail = x1 - x0;
+  int off = tw <= avail ? 0 : avail - (int)(((frameNo - ntT0) * 2) % (tw + avail));
+  pxBig(s, ntTx, x0 + off, by + 21, k, ntCol, x0, x1, 0);
+}
+
 void clockFrame() {
   TFT_eSprite& s = sceneSpr;
   sceneFrame(s, frameNo);
@@ -637,17 +654,162 @@ void clockFrame() {
     if (buf[0]) pxBig(s, buf, evX, evY, evSize, col, evX, 316, clockFont);
   }
 
-  // aviso: faixa escura embaixo, com icone e texto rolando
-  if (ntOn) {
-    const int by = 172, bh = 56;
-    s.fillRoundRect(8, by, W - 16, bh, 10, TFT_BLACK);
-    s.drawRoundRect(8, by, W - 16, bh, 10, ntCol);
-    pxIconBig(s, ntIc, 18, by + 12, 4);
-    const int x0 = 60, x1 = W - 16, k = 3;
-    int tw = pxTextW(ntTx, k, 0), avail = x1 - x0;
-    int off = tw <= avail ? 0 : avail - (int)(((frameNo - ntT0) * 2) % (tw + avail));
-    pxBig(s, ntTx, x0 + off, by + 21, k, ntCol, x0, x1, 0);
+  drawNoteBanner(s);
+  s.pushSprite(0, 0);
+}
+
+// ---------- estacao do tempo ----------
+void stCloud(TFT_eSprite& s, int x, int y, uint16_t c) {
+  s.fillCircle(x + 10, y + 9, 9, c);
+  s.fillCircle(x + 23, y + 5, 12, c);
+  s.fillCircle(x + 37, y + 10, 8, c);
+  s.fillRoundRect(x + 2, y + 9, 44, 11, 5, c);
+}
+
+// Ilustracao do tempo no canto (x 6..134, y 6..118), animada: sol girando, nuvens indo e
+// vindo, chuva/neve caindo, raio piscando, grama e flores balancando.
+void stationArt(TFT_eSprite& s, uint32_t fr) {
+  const int X = 6, G = 100;  // G = linha do chao
+  char ic = S.wOk ? S.ic : 'C';
+  bool day = S.day;
+  float drift = sinf(fr * 0.02f) * 5;
+  if (ic == 'S' || ic == 'P') {
+    int cx = X + 42, cy = 36;
+    if (day) {
+      float a0 = fr * 0.025f;
+      for (int i = 0; i < 10; i++) {
+        float a = a0 + i * 0.6283f;
+        int r2 = 27 + ((fr / 8 + i) % 2) * 3;
+        s.drawLine(cx + cosf(a) * 20, cy + sinf(a) * 20, cx + cosf(a) * r2, cy + sinf(a) * r2, rgb(255, 170, 0));
+      }
+      s.fillCircle(cx, cy, 16, rgb(255, 110, 0));
+      s.fillCircle(cx - 4, cy - 4, 9, rgb(255, 190, 40));
+    } else {
+      s.fillCircle(cx, cy, 15, rgb(235, 230, 200));
+      s.fillCircle(cx + 8, cy - 6, 14, TFT_BLACK);
+      for (int i = 0; i < 6; i++)
+        if ((fr / 10 + i) % 4) s.drawPixel(X + 10 + i * 21, 10 + (i * 17) % 50, TFT_WHITE);
+    }
+    if (ic == 'P') stCloud(s, X + 50 + drift, 44, TFT_WHITE);
+  } else if (ic == 'F') {
+    for (int i = 0; i < 6; i++) {
+      int off = (int)(sinf(fr * 0.03f + i) * 8);
+      s.fillRoundRect(X + 8 + off + (i % 2) * 14, 20 + i * 12, 96, 5, 2, rgb(150, 156, 168));
+    }
+  } else {
+    // nublado / chuva / trovoada / neve
+    bool dark = ic == 'R' || ic == 'T';
+    stCloud(s, X + 4 + drift, 14, dark ? rgb(110, 116, 130) : rgb(200, 206, 216));
+    stCloud(s, X + 56 - drift, 28, dark ? rgb(80, 86, 100) : TFT_WHITE);
+    if (ic == 'R' || ic == 'T') {
+      for (int i = 0; i < 12; i++) {
+        int x = X + 14 + (i * 23) % 100, y = 56 + (int)((fr * 3 + i * 17) % 40);
+        s.drawLine(x, y, x - 2, y + 6, rgb(90, 160, 255));
+      }
+    }
+    if (ic == 'T' && (fr % 90) < 6) {  // raio
+      int x = X + 70;
+      s.drawLine(x, 52, x - 8, 66, rgb(255, 230, 60));
+      s.drawLine(x - 8, 66, x, 66, rgb(255, 230, 60));
+      s.drawLine(x, 66, x - 10, 84, rgb(255, 230, 60));
+    }
+    if (ic == 'N') {
+      for (int i = 0; i < 14; i++) {
+        int x = X + 10 + (i * 19) % 110 + (int)(sinf(fr * 0.05f + i) * 3), y = 56 + (int)((fr + i * 13) % 40);
+        s.fillCircle(x, y, 1, TFT_WHITE);
+      }
+    }
   }
+  // chao: grama balancando e duas flores
+  s.fillRect(X, G + 6, 128, 10, rgb(24, 120, 36));
+  for (int x = X; x < X + 128; x += 3) {
+    int h = 6 + (x * 7) % 7;
+    int sway = (int)(sinf(fr * 0.06f + x * 0.2f) * 2);
+    s.drawLine(x, G + 7, x + sway, G + 7 - h, ((x / 3) % 2) ? rgb(70, 200, 80) : rgb(40, 160, 60));
+  }
+  const int fx[2] = {X + 20, X + 104};
+  const uint16_t fc[2] = {rgb(255, 90, 170), rgb(255, 210, 40)};
+  for (int i = 0; i < 2; i++) {
+    int sway = (int)(sinf(fr * 0.05f + i * 2) * 2);
+    s.drawLine(fx[i], G + 7, fx[i] + sway, G - 6, rgb(40, 160, 60));
+    int px = fx[i] + sway, py = G - 8;
+    for (int p = 0; p < 5; p++) s.fillCircle(px + cosf(p * 1.2566f) * 3, py + sinf(p * 1.2566f) * 3, 2, fc[i]);
+    s.fillCircle(px, py, 1, rgb(255, 240, 120));
+  }
+}
+
+void stationFrame() {
+  TFT_eSprite& s = sceneSpr;
+  s.fillSprite(TFT_BLACK);
+  stationArt(s, frameNo);
+  bool stale = isStale();
+  long e = nowLocal();
+  char hh[3], mm[3], sc[3];
+  snprintf(hh, sizeof(hh), "%02ld", (e / 3600) % 24);
+  snprintf(mm, sizeof(mm), "%02ld", (e / 60) % 60);
+  snprintf(sc, sizeof(sc), "%02ld", e % 60);
+
+  // hora grande a direita: calcula o maior tamanho que cabe em 176 px
+  const int AX = 140, AW = 176;
+  int K = 12;
+  for (; K > 4; K--) {
+    int w = pxTextW(hh, K, stFont) * 2 + K * 2 + (showSec ? pxTextW(sc, 3, stFont) + 4 : 0);
+    if (w <= AW) break;
+  }
+  int wHH = pxTextW(hh, K, stFont), colW = K * 2;
+  int wAll = wHH * 2 + colW + (showSec ? pxTextW(sc, 3, stFont) + 4 : 0);
+  int x = AX + (AW - wAll) / 2, y = 10;
+  uint16_t tc = stale ? C_MUTED : stCol;
+  pxBig(s, hh, x, y, K, tc, 0, W, stFont);
+  if (e % 2 == 0) {  // dois pontos piscando
+    int cx = x + wHH + K / 2;
+    s.fillRect(cx, y + K * 3 / 2, K, K, tc);
+    s.fillRect(cx, y + K * 7 / 2 - K / 2, K, K, tc);
+  }
+  pxBig(s, mm, x + wHH + colW, y, K, tc, 0, W, stFont);
+  if (showSec) pxBig(s, sc, x + wHH * 2 + colW + 4, y, 3, C_ACCENT, 0, W, stFont);
+
+  // fileira de dias da semana, com o de hoje destacado
+  static const char* DOW[7] = {"DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"};
+  int ry = y + pxTextH(K, stFont) + 10;
+  // fonte LCD pequena (GLCD 5x7): 3 letras = 17 px, sobra espaco entre os dias
+  s.setTextDatum(TL_DATUM);
+  for (int i = 0; i < 7; i++) {
+    int dx = AX + 2 + i * 25;
+    if (i == stWday) {
+      s.fillRoundRect(dx - 3, ry - 2, 23, 12, 2, stCol2);
+      s.setTextColor(TFT_BLACK);
+    } else {
+      s.setTextColor(rgb(210, 70, 60));
+    }
+    s.drawString(DOW[i], dx, ry, 1);
+  }
+  char buf[48];
+  upcase(S.data, buf, sizeof(buf));
+  pxBig(s, buf, AX + 2, ry + 18, 2, C_MUTED, 0, W, 0);
+
+  // umidade e temperatura grandes embaixo
+  const int by = 128, KB = 9;
+  pxBig(s, "UMIDADE", 12, by, 2, C_MUTED, 0, W, 0);
+  pxBig(s, "TEMPERATURA", 166, by, 2, C_MUTED, 0, W, 0);
+  if (S.wOk) {
+    snprintf(buf, sizeof(buf), "%d", S.hu);
+    pxBig(s, buf, 12, by + 18, KB, stCol2, 0, 160, stFont);
+    pxBig(s, "%", 12 + pxTextW(buf, KB, stFont) + 6, by + 18 + KB * 2, 4, stCol2, 0, 160, 0);
+    snprintf(buf, sizeof(buf), "%.1f", stTd);
+    int tw = pxTextW(buf, KB, stFont);
+    pxBig(s, buf, 166, by + 18, KB, stCol2, 0, W, stFont);
+    pxBig(s, "~C", 166 + tw + 5, by + 18, 3, stCol2, 0, W, 0);
+    // linha de baixo: minima, maxima e chuva do dia
+    snprintf(buf, sizeof(buf), "MIN %d  MAX %d  CHUVA %d%%", S.mn, S.mx, S.rx);
+    pxBig(s, buf, 12, 222, 2, C_MUTED, 0, W, 0);
+  }
+  if (stale && linkErr[0]) {
+    upcase(linkErr, buf, sizeof(buf));
+    s.fillRect(0, 218, W, 22, TFT_BLACK);
+    pxBig(s, buf, 12, 222, 2, C_BAD, 0, W, 0);
+  }
+  drawNoteBanner(s);
   s.pushSprite(0, 0);
 }
 
@@ -862,7 +1024,13 @@ bool handlePayload(const String& body) {
 
   JsonObject lay = doc["lay"];
   const char* f = lay["f"] | "";
-  Mode want = !strcmp(f, "clock") ? M_CLOCK : !strcmp(f, "pixel") ? M_PIXEL : M_GRID;
+  Mode want = !strcmp(f, "clock") ? M_CLOCK : !strcmp(f, "pixel") ? M_PIXEL : !strcmp(f, "station") ? M_STATION : M_GRID;
+  if (want == M_STATION) {
+    stCol = lay["col"] | 0xFFFF;
+    stCol2 = lay["col2"] | 0x5E9F;
+    stFont = constrain((int)(lay["fn"] | 2), 0, 4);
+    stWday = constrain((int)(lay["wd"] | 0), 0, 6);
+  }
   const char* scn = lay["sc"] | "none";
   showSec = (lay["sec"] | 1) == 1;
   clockCol = lay["col"] | 0xFE87;
@@ -940,6 +1108,7 @@ bool handlePayload(const String& body) {
     S.wOk = (w["ok"] | 0) == 1;
     strlcpy(S.city, w["city"] | "", sizeof(S.city));
     S.tc = w["tc"] | 0;
+    stTd = w["td"] | (float)S.tc;
     S.mn = w["mn"] | 0;
     S.mx = w["mx"] | 0;
     S.ic = (w["ic"] | "C")[0];
@@ -1215,6 +1384,7 @@ void loop() {
     if (millis() - lastFrame >= FRAME_MS && sceneSpr.created()) {
       lastFrame = millis();
       if (mode == M_CLOCK) clockFrame();
+      else if (mode == M_STATION) stationFrame();
       else pixelFrame();
       frameNo++;
     }

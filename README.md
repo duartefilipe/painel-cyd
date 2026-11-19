@@ -25,6 +25,10 @@ Além da tela em regiões, uma tela pode ser:
   com hora, data, tempo e próximo compromisso por cima. Fonte (pixel, LED, 7 segmentos,
   arcade, lisa), tamanho e posição de cada item são ajustáveis; no painel basta arrastar
   os itens na prévia.
+- **Estação do tempo:** no estilo dos relógios-estação de mesa. Ilustração animada do
+  tempo de agora (sol girando, nuvens, chuva, raio, neve ou neblina, com grama e flores),
+  hora grande em 7 segmentos, fileira DOM–SAB com o dia de hoje destacado e **umidade** e
+  **temperatura** (com decimal) em números grandes. Fonte e cores ajustáveis.
 - **Relógio pixel (matriz 32×8):** simula um painel de LEDs 32×8 (estilo Ulanzi/AWTRIX)
   com uma sequência de "apps" (hora, data, tempo, cotação, agenda, CPU, texto) que se
   alternam deslizando.

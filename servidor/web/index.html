@@ -97,7 +97,7 @@
 
   /* Relogio de mesa (tipo "clock"): metade de cima relogio, metade de baixo animacao */
   .screen { position: relative; }
-  .screen canvas.ov, .screen canvas.px { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+  .screen canvas.ov, .screen canvas.px, .screen canvas.st { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
   .screen .scene { height: calc(240px * var(--k)); position: relative; overflow: hidden; }
   .sc-aquarium { background: linear-gradient(#0b3a5c, #062338); }
   .sc-aquarium u { position: absolute; left: 0; right: 0; bottom: 0; height: 14%; background: #c2a46b; }
@@ -275,7 +275,7 @@ let draft = null, dirty = false;   // copia editavel das telas
 
 const WIDGETS_HALF = { sys: "Sistema do PC", w: "Tempo", wd: "Tempo detalhado", fx: "Cotacoes", none: "(vazio)" };
 const WIDGETS_BOTTOM = { ev: "Agenda", none: "(vazio)" };
-const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa", pixel: "Relogio pixel (LEDs)" };
+const KINDS = { grid: "Regioes (widgets)", clock: "Relogio de mesa", pixel: "Relogio pixel (LEDs)", station: "Estacao do tempo" };
 const APP_TYPES = { clock: "Hora", date: "Data", weather: "Tempo", rain: "Chance de chuva", humidity: "Umidade", sun: "Nascer/por do sol", tomorrow: "Previsao amanha", quote: "Cotacao", event: "Prox. compromisso", cpu: "CPU do PC", text: "Texto livre" };
 const TRANS = { slide: "Deslizar", none: "Corte seco" };
 const SCENES = { aquarium: "Aquario", stars: "Ceu estrelado", matrix: "Chuva Matrix", fire: "Fogo", rain: "Noite de chuva", sunset: "Synthwave", snow: "Nevasca", aurora: "Aurora boreal", none: "Sem animacao" };
@@ -435,6 +435,82 @@ function animCanvas(el, cls) {
   return cv;
 }
 
+// ---- estacao do tempo: espelha stationFrame() do firmware ----
+function renderStation(el, p, live) {
+  if (!el.querySelector("canvas.st")) el.innerHTML = "";
+  const cv = animCanvas(el, "st");
+  const a = anims.get(cv) || { kind: "station", fr: 0 };
+  Object.assign(a, { p, stale: live && !(S.device.at && S.now - S.device.at < 5) });
+  anims.set(cv, a);
+  return cv;
+}
+function stCloud(ctx, x, y, c) {
+  ctx.fillStyle = c;
+  for (const [cx, cy, r] of [[10, 9, 9], [23, 5, 12], [37, 10, 8]]) { ctx.beginPath(); ctx.arc(x + cx, y + cy, r, 0, 7); ctx.fill(); }
+  ctx.beginPath(); ctx.roundRect(x + 2, y + 9, 44, 11, 5); ctx.fill();
+}
+function stationArt(ctx, w, fr) {
+  const X = 6, G = 100, ic = w.ok ? w.ic : "C", day = w.ok ? w.day : 1, drift = Math.sin(fr * 0.02) * 5;
+  const line = (x1, y1, x2, y2, c) => { ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); };
+  const dot = (x, y, r, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); };
+  ctx.lineWidth = 1.2;
+  if (ic === "S" || ic === "P") {
+    const cx = X + 42, cy = 36;
+    if (day) {
+      for (let i = 0; i < 10; i++) { const a = fr * 0.025 + i * 0.6283, r2 = 27 + (((fr >> 3) + i) % 2) * 3; line(cx + Math.cos(a) * 20, cy + Math.sin(a) * 20, cx + Math.cos(a) * r2, cy + Math.sin(a) * r2, "#ffaa00"); }
+      dot(cx, cy, 16, "#ff6e00"); dot(cx - 4, cy - 4, 9, "#ffbe28");
+    } else { dot(cx, cy, 15, "#ebe6c8"); dot(cx + 8, cy - 6, 14, "#000"); }
+    if (ic === "P") stCloud(ctx, X + 50 + drift, 44, "#fff");
+  } else if (ic === "F") {
+    ctx.fillStyle = "#969ca8";
+    for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.roundRect(X + 8 + Math.sin(fr * 0.03 + i) * 8 + (i % 2) * 14, 20 + i * 12, 96, 5, 2); ctx.fill(); }
+  } else {
+    const dark = ic === "R" || ic === "T";
+    stCloud(ctx, X + 4 + drift, 14, dark ? "#6e7482" : "#c8ced8");
+    stCloud(ctx, X + 56 - drift, 28, dark ? "#505664" : "#fff");
+    if (dark) for (let i = 0; i < 12; i++) { const x = X + 14 + (i * 23) % 100, y = 56 + ((fr * 3 + i * 17) % 40); line(x, y, x - 2, y + 6, "#5aa0ff"); }
+    if (ic === "T" && fr % 90 < 6) { line(X + 70, 52, X + 62, 66, "#ffe63c"); line(X + 62, 66, X + 70, 66, "#ffe63c"); line(X + 70, 66, X + 60, 84, "#ffe63c"); }
+    if (ic === "N") for (let i = 0; i < 14; i++) dot(X + 10 + (i * 19) % 110 + Math.sin(fr * 0.05 + i) * 3, 56 + ((fr + i * 13) % 40), 1.3, "#fff");
+  }
+  ctx.fillStyle = "#187824"; ctx.fillRect(X, G + 6, 128, 10);
+  for (let x = X; x < X + 128; x += 3) line(x, G + 7, x + Math.sin(fr * 0.06 + x * 0.2) * 2, G + 7 - (6 + (x * 7) % 7), (x / 3) % 2 ? "#46c850" : "#28a03c");
+  [[X + 20, "#ff5aaa"], [X + 104, "#ffd228"]].forEach(([fx, c], i) => {
+    const sw = Math.sin(fr * 0.05 + i * 2) * 2; line(fx, G + 7, fx + sw, G - 6, "#28a03c");
+    for (let p = 0; p < 5; p++) dot(fx + sw + Math.cos(p * 1.2566) * 3, G - 8 + Math.sin(p * 1.2566) * 3, 2, c);
+    dot(fx + sw, G - 8, 1, "#fff078");
+  });
+}
+function drawStation(cv, a) {
+  const ctx = cv.getContext("2d"), p = a.p, L = p.lay, f = L.fn ?? 2, d = new Date(), w = p.w || { ok: 0 };
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 320, 240);
+  stationArt(ctx, w, a.fr);
+  const hh = String(d.getHours()).padStart(2, "0"), mm = String(d.getMinutes()).padStart(2, "0"), ss = String(d.getSeconds()).padStart(2, "0");
+  const AX = 140, AW = 176, secW = L.sec ? pxTextW(ss, 3, f) + 4 : 0;
+  let K = 12; while (K > 4 && pxTextW(hh, K, f) * 2 + K * 2 + secW > AW) K--;
+  const wHH = pxTextW(hh, K, f), x = AX + Math.floor((AW - (wHH * 2 + K * 2 + secW)) / 2), y = 10, tc = a.stale ? "#828a98" : c565(L.col);
+  pxBig(ctx, hh, x, y, K, tc, [0, 320], f);
+  if (d.getSeconds() % 2 === 0) { ctx.fillStyle = tc; const cx = x + wHH + (K >> 1); ctx.fillRect(cx, y + (K * 3 >> 1), K, K); ctx.fillRect(cx, y + K * 3, K, K); }
+  pxBig(ctx, mm, x + wHH + K * 2, y, K, tc, [0, 320], f);
+  if (L.sec) pxBig(ctx, ss, x + wHH * 2 + K * 2 + 4, y, 3, "#ff8c28", [0, 320], f);
+  const DOW = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"], ry = y + pxTextH(K, f) + 10;
+  ctx.font = "bold 9px monospace"; ctx.textBaseline = "top";  // fonte LCD pequena (no firmware: GLCD 5x7)
+  DOW.forEach((n, i) => {
+    const dx = AX + 2 + i * 25;
+    if (i === L.wd) { ctx.fillStyle = c565(L.col2); ctx.beginPath(); ctx.roundRect(dx - 3, ry - 2, 23, 12, 2); ctx.fill(); ctx.fillStyle = "#000"; }
+    else ctx.fillStyle = "#d2463c";
+    ctx.fillText(n, dx, ry);
+  });
+  pxBig(ctx, (p.d || "").toUpperCase().normalize("NFKD").replace(/[^\x20-\x7e]/g, ""), AX + 2, ry + 18, 2, "#828a98");
+  const by = 128, KB = 9, c2 = c565(L.col2);
+  pxBig(ctx, "UMIDADE", 12, by, 2, "#828a98"); pxBig(ctx, "TEMPERATURA", 166, by, 2, "#828a98");
+  if (w.ok) {
+    const hu = String(w.hu ?? 0), td = (w.td ?? w.tc).toFixed(1);
+    pxBig(ctx, hu, 12, by + 18, KB, c2, [0, 160], f); pxBig(ctx, "%", 12 + pxTextW(hu, KB, f) + 6, by + 18 + KB * 2, 4, c2);
+    pxBig(ctx, td, 166, by + 18, KB, c2, [0, 320], f); pxBig(ctx, "~C", 166 + pxTextW(td, KB, f) + 5, by + 18, 3, c2);
+    pxBig(ctx, `MIN ${w.mn}  MAX ${w.mx}  CHUVA ${w.rx ?? 0}%`, 12, 222, 2, "#828a98");
+  }
+}
+
 // ---- relogio de mesa: animacao (CSS) em tela cheia + informacoes pixeladas por cima ----
 function renderClock(el, p, live) {
   const stale = live && !(S.device.at && S.now - S.device.at < 5);
@@ -582,7 +658,7 @@ setInterval(() => {
   for (const [cv, a] of anims) {
     if (!cv.isConnected) { anims.delete(cv); continue; }
     a.fr++;
-    if (a.kind === "clock") drawClock(cv, a); else drawPixel(cv, a);
+    if (a.kind === "clock") drawClock(cv, a); else if (a.kind === "station") drawStation(cv, a); else drawPixel(cv, a);
   }
 }, 33);
 // Apps de uma tela em edicao (o servidor so calcula as telas salvas): mesma regra de pixel_apps()
@@ -627,6 +703,7 @@ function sceneHtml(sc) {
 function renderScreen(el, p, live) {
   if (p.lay.f === "clock") return renderClock(el, p, live);
   if (p.lay.f === "pixel") return renderPixel(el, p);
+  if (p.lay.f === "station") return renderStation(el, p, live);
   const stale = live && !(S.device.at && S.now - S.device.at < 5);
   const ev = p.ev;
   el.innerHTML = `
@@ -698,7 +775,14 @@ function renderScreens() {
         <div class="opts muted">Arraste os itens na previa para posiciona-los · tamanho 0 esconde o item
           <button class="ghost" data-center title="Volta a centralizar a hora">Centralizar hora</button>
           <button class="ghost" data-resetpos>Posicoes padrao</button>
-        </div>` : (s.kind || "grid") === "pixel" ? `
+        </div>` : s.kind === "station" ? `
+        <div class="opts">
+          <span class="muted">Fonte</span><select data-f="font">${opts(FONTS, s.font || "segment")}</select>
+          <span class="muted">Hora</span><input type="color" data-f="color" value="${esc(s.color || "#ffffff")}">
+          <span class="muted">Umidade/temp.</span><input type="color" data-f="color2" value="${esc(s.color2 || "#5ad2ff")}">
+          <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="seconds" ${s.seconds !== false ? "checked" : ""}> segundos</label>
+        </div>
+        <div class="opts muted">A ilustracao acompanha o tempo de agora: sol, lua, nuvens, chuva, raio, neve ou neblina.</div>` : (s.kind || "grid") === "pixel" ? `
         <div class="opts"><span class="muted">Transicao</span><select data-f="trans">${opts(TRANS, s.trans || "slide")}</select>
           <span class="muted">Apps alternam na ordem abaixo</span></div>
         <div class="apps">${(s.apps || []).map((a, j) => `
@@ -781,6 +865,8 @@ function paintPreviews() {
           fn: FONT_ID[s.font] ?? 0, cs: s.csize ?? 12, cx: s.cx ?? -1, cy: s.cy ?? 14, ds: s.dsize ?? 3, dx: s.dx ?? 12, dy: s.dy ?? 88,
           ws: s.wsize ?? 3, wx: s.wx ?? 238, wy: s.wy ?? 88, es: s.esize ?? 3, ex: s.ex ?? 12, ey: s.ey ?? 110 }
         : s.kind === "pixel" ? { f: "pixel", tr: s.trans || "slide", a: PX ? appsLocal(s) : [] }
+        : s.kind === "station" ? { f: "station", col: hex565(s.color || "#ffffff"), col2: hex565(s.color2 || "#5ad2ff"),
+          fn: FONT_ID[s.font || "segment"] ?? 2, sec: s.seconds !== false ? 1 : 0, wd: new Date().getDay() }
         : { l: s.left, r: s.right, b: s.bottom } };
     const cv = renderScreen(el.querySelector("[data-prev]"), p, false);
     if (s.kind === "clock" && cv) enableDrag(cv, +el.dataset.i);
