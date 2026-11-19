@@ -166,6 +166,12 @@ ICONS = {
     "home": ["...RR...", "..RRRR..", ".RRRRRR.", "RRRRRRRR", ".WWWWWW.", ".WWNNWW.", ".WWNNWW.", ".WWNNWW."],
     "music": ["..BBBBBB", "..B....B", "..B....B", "..B....B", "BBB..BBB", "BBB..BBB", "........", "........"],
     "coffee": ["..W.W...", ".W.W....", "........", "NNNNNNN.", "NNNNNN.N", "NNNNNNN.", ".NNNN...", "........"],
+    "drop": ["...C....", "...C....", "..CCC...", "..CCC...", ".CCLCC..", ".CLCCC..", ".CCCCC..", "..CCC..."],
+    "bell": ["...Y....", "..YYY...", ".YYYYY..", ".YYYYY..", ".YYYYY..", "YYYYYYY.", "........", "...O...."],
+    "check": ["........", ".......G", "......GG", "G....GG.", "GG..GG..", ".GGGG...", "..GG....", "........"],
+    "alert": ["...R....", "..RRR...", "..RWR...", ".RRWRR..", ".RRWRR..", "RRRRRRR.", "RRRWRRR.", "RRRRRRR."],
+    "sunrise": ["........", "...Y....", ".Y.Y.Y..", "..YYY...", "YYYYYYY.", "........", "OOOOOOOO", "........"],
+    "sunset": ["........", "........", "..OOO...", ".OOOOO..", "OOOOOOO.", "........", "RRRRRRRR", "........"],
 }
 
 

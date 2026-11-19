@@ -45,14 +45,15 @@ WEATHER_EVERY = 600     # 10 min
 CALENDAR_EVERY = 120    # 2 min
 QUOTES_EVERY = 300      # 5 min
 
-SLOT_HALF = {"sys", "w", "fx", "none"}
+SLOT_HALF = {"sys", "w", "wd", "fx", "none"}   # wd = tempo detalhado
 SLOT_BOTTOM = {"ev", "none"}
 # grid = 3 regioes; clock = relogio de mesa (animacao em tela cheia + hora pixelada);
 # pixel = faixa de LEDs 32x8 com "apps" que se alternam
 KINDS = {"grid", "clock", "pixel"}
 SCENES = {"aquarium", "stars", "matrix", "fire", "rain", "sunset", "snow", "aurora", "none"}   # animacao de fundo do relogio
 FONTS = {"pixel": 0, "dots": 1, "segment": 2, "arcade": 3, "clean": 4}
-APP_TYPES = {"clock", "date", "weather", "quote", "event", "cpu", "text"}
+APP_TYPES = {"clock", "date", "weather", "quote", "event", "cpu", "text", "rain", "sun", "tomorrow", "humidity"}
+MAX_NOTES = 5
 TRANSITIONS = {"slide", "none"}
 MAX_APPS = 8
 
@@ -63,7 +64,8 @@ PX_CHARS = set(PIXEL["font"])
 PX_ICONS = set(PIXEL["icons"])
 WEATHER_ICON = {"S": "sun", "P": "partly", "C": "cloud", "F": "fog", "R": "rain", "T": "storm", "N": "snow"}
 QUOTE_ICON = {"USD": "dollar", "EUR": "euro", "BTC": "bitcoin"}
-APP_ICON = {"clock": "clock", "date": "calendar", "event": "calendar", "cpu": "cpu", "text": "heart", "quote": "dollar"}
+APP_ICON = {"clock": "clock", "date": "calendar", "event": "calendar", "cpu": "cpu", "text": "heart", "quote": "dollar",
+            "rain": "rain", "sun": "sun", "tomorrow": "partly", "humidity": "drop"}
 
 
 def px_text(s: str, n: int = 60) -> str:
@@ -90,8 +92,11 @@ state = {
     "weather": None, "weather_at": None, "weather_err": None,
     "events": [], "cal_at": None, "cal_status": "off", "cal_err": None,
     "quotes": [], "quotes_at": None, "quotes_err": None,
-    "device": {"at": None, "ip": None, "n": 0, "screen": None},
+    "device": {"at": None, "ip": None, "n": 0, "screen": None, "ldr": None},
+    "notes": [],            # avisos ativos: {id, text, icon, color, until, at}
+    "override": None,       # {screen, until}: tela escolhida pelo toque
 }
+note_seq = 0
 lock = threading.Lock()
 wake = {k: threading.Event() for k in ("weather", "calendar", "quotes")}
 gcal = GCal()
@@ -201,11 +206,78 @@ def find_screen(cfg: dict, sid: str) -> dict:
     return cfg["screens"][0] if cfg["screens"] else {"id": "-", "name": "-", "kind": "grid", "left": "none", "right": "none", "bottom": "none"}
 
 
-def active_screen(cfg: dict) -> dict:
+def _minutes(hhmm: str) -> int:
+    try:
+        h, m = str(hhmm).split(":")
+        return int(h) * 60 + int(m)
+    except ValueError:
+        return -1
+
+
+def schedule_rule(cfg: dict, now: datetime | None = None) -> dict | None:
+    """Primeira regra de horario que vale agora (de/ate podem passar da meia-noite)."""
+    sch = cfg["schedule"]
+    if not sch.get("enabled"):
+        return None
+    now = now or datetime.now(TZ)
+    m = now.hour * 60 + now.minute
+    for r in sch.get("rules", []):
+        a, b = _minutes(r.get("from", "")), _minutes(r.get("to", ""))
+        if a < 0 or b < 0 or a == b:
+            continue
+        if (a < b and a <= m < b) or (a > b and (m >= a or m < b)):
+            return r
+    return None
+
+
+def touch_override() -> dict | None:
+    with lock:
+        ov = state["override"]
+        if ov and time.time() >= ov["until"]:
+            state["override"] = ov = None
+    return ov
+
+
+def mode_screen(cfg: dict) -> dict:
+    """Tela pelo modo automatico/manual, sem toque nem horario."""
     d = cfg["display"]
     if d["mode"] == "manual":
         return find_screen(cfg, d["manual"])
     return find_screen(cfg, d["pc_on"] if pc_online(cfg) else d["pc_off"])
+
+
+def active_screen(cfg: dict) -> dict:
+    # prioridade: toque (temporario) > regra de horario > automatico/manual
+    ov = touch_override()
+    if ov:
+        return find_screen(cfg, ov["screen"])
+    r = schedule_rule(cfg)
+    if r and r.get("screen"):
+        return find_screen(cfg, r["screen"])
+    return mode_screen(cfg)
+
+
+def display_cfg(cfg: dict) -> dict:
+    """Brilho/cores para a placa, ja com a regra de horario e o brilho automatico."""
+    li = cfg["light"]
+    out = {"br": int(cfg["brightness"]), "inv": int(cfg["invert"]), "rot": int(cfg["rotation"]),
+           "ab": 1 if li.get("auto") else 0, "ld": int(li.get("dark", 3000)), "lb": int(li.get("bright", 300)),
+           "bm": int(li.get("min", 15)), "bx": int(li.get("max", 255)), "off": 0}
+    r = None if touch_override() else schedule_rule(cfg)  # tocar acorda a tela mesmo num horario "apagado"
+    if r:
+        if r.get("off"):
+            out["off"] = 1
+        b = int(r.get("brightness", -1))
+        if b >= 0:  # regra com brilho fixo: vale mais que o automatico
+            out.update(br=b, ab=0)
+    return out
+
+
+def current_note() -> dict | None:
+    now = time.time()
+    with lock:
+        state["notes"] = [n for n in state["notes"] if n["until"] > now]
+        return state["notes"][0] if state["notes"] else None
 
 
 def fx_block(cfg: dict) -> dict:
@@ -260,6 +332,24 @@ def pixel_apps(scr: dict, cfg: dict, now: datetime, online: bool) -> list:
             text = f"{sysm['cpu']:.0f}%"
         elif t == "text":
             text = a.get("text", "")
+        elif t in ("rain", "sun", "tomorrow", "humidity"):
+            if not w:
+                continue
+            if t == "rain":
+                text = f"{w.get('rain') or 0}% ({w.get('rain_max') or 0}%)"
+            elif t == "humidity":
+                text = f"{w.get('hum') or 0}%"
+            elif t == "sun":
+                # mostra o proximo evento do sol: nascer de manha, por depois do meio-dia
+                hm = now.strftime("%H:%M")
+                if w.get("sunrise") and hm < w["sunrise"]:
+                    text, auto = w["sunrise"], "sunrise"
+                else:
+                    text, auto = w.get("sunset", ""), "sunset"
+            else:
+                tm = w.get("tomorrow") or {}
+                text = f"{tm.get('mn', 0)}/{tm.get('mx', 0)}~ {tm.get('rain', 0)}%"
+                auto = WEATHER_ICON.get(tm.get("ic", "C"), "cloud")
         out.append([auto if icon == "auto" else icon, hex565(a.get("color", "#ffffff")),
                     int(a.get("dur", 6)), clk, px_text(text, 60)])
     return out
@@ -278,6 +368,8 @@ def build_payload(screen: dict | None = None) -> dict:
         slots = set()
     else:
         slots = {scr.get("left"), scr.get("right"), scr.get("bottom")}
+        if "wd" in slots:
+            slots.add("w")  # o detalhado usa o mesmo bloco de tempo
     with lock:
         w, evs, st, err, sysm = state["weather"], list(state["events"]), state["cal_status"], state["cal_err"], state["sys"]
 
@@ -301,18 +393,27 @@ def build_payload(screen: dict | None = None) -> dict:
         "d": f"{DIAS[now.weekday()]}, {now.day:02d} {MESES[now.month - 1]}",
         # segundos desde 1970 no horario LOCAL: a placa conta os segundos sozinha a partir daqui
         "ep": int(now.timestamp() + now.utcoffset().total_seconds()),
-        "cfg": {"br": int(cfg["brightness"]), "inv": int(cfg["invert"]), "rot": int(cfg["rotation"])},
+        "cfg": display_cfg(cfg),
         "lay": lay,
         "pc": 1 if online else 0,
     }
+    nt = current_note()
+    if nt:
+        p["nt"] = {"id": nt["id"], "tx": nt["text"], "ic": nt["icon"], "c": hex565(nt["color"]),
+                   "s": max(1, int(nt["until"] - time.time()))}
     if "sys" in slots and online and sysm:
         p["sys"] = sysm
     if "w" in slots:
         if w:
+            tm = w.get("tomorrow") or {}
             p["w"] = {
                 "ok": 1, "city": ascii_text(cfg["city"]["name"], 22), "tc": w["tc"], "ic": w["ic"],
                 "day": w["day"], "mn": w["mn"], "mx": w["mx"],
-                "h": [[h["lbl"], h["temp"], h["ic"]] for h in w["hours"]],
+                # detalhes: umidade, chuva agora / maxima do dia, nascer e por do sol, amanha
+                "hu": w.get("hum") or 0, "rp": w.get("rain") or 0, "rx": w.get("rain_max") or 0,
+                "sr": w.get("sunrise", ""), "ss": w.get("sunset", ""),
+                "tm": [tm.get("mn", 0), tm.get("mx", 0), tm.get("ic", "C"), tm.get("rain", 0)],
+                "h": [[h["lbl"], h["temp"], h["ic"], h.get("rain") or 0] for h in w["hours"]],
             }
         else:
             p["w"] = {"ok": 0, "city": ascii_text(cfg["city"]["name"], 22)}
@@ -458,10 +559,78 @@ def api_screen():
     """O que a CYD busca a cada segundo."""
     cfg = config.load()
     scr = active_screen(cfg)
+    ldr = request.args.get("ldr", type=int)  # leitura do sensor de luz, para calibrar pelo painel
     with lock:
         d = state["device"]
         d.update(at=time.time(), ip=request.remote_addr, n=d["n"] + 1, screen=scr["id"])
+        if ldr is not None:
+            d["ldr"] = ldr
     return jsonify(build_payload(scr))
+
+
+# ---------- avisos ----------
+@app.post("/api/notify")
+def api_notify():
+    """Mostra um aviso por cima de qualquer tela. Ex.:
+    curl -H "Authorization: Bearer $TOKEN" -d '{"text":"Scan terminou","icon":"check","color":"#50c878"}' .../api/notify
+    """
+    global note_seq
+    b = request.get_json(force=True, silent=True) or {}
+    text = px_text(b.get("text", ""), 80).strip()
+    if not text:
+        return jsonify({"error": "campo 'text' obrigatorio"}), 400
+    icon = b.get("icon") if b.get("icon") in PX_ICONS else "bell"
+    dur = _clamp(b.get("dur", 15), 3, 3600, 15)
+    with lock:
+        note_seq += 1
+        note = {"id": note_seq, "text": text, "icon": icon, "color": clean_hex(b.get("color"), "#ffffff"),
+                "until": time.time() + dur, "at": time.time()}
+        state["notes"] = (state["notes"] + [note])[-MAX_NOTES:]
+    log.info("aviso %d: %s", note_seq, text)
+    return jsonify({"ok": True, "id": note_seq})
+
+
+@app.get("/api/notify")
+def api_notify_list():
+    current_note()  # limpa os vencidos
+    with lock:
+        return jsonify(list(state["notes"]))
+
+
+@app.delete("/api/notify")
+def api_notify_clear():
+    with lock:
+        state["notes"] = []
+    return jsonify({"ok": True})
+
+
+# ---------- toque na tela ----------
+@app.post("/api/touch")
+def api_touch():
+    """A placa avisa um toque. next: proxima tela por touch_minutes; wake: acende a tela
+    apagada pelo horario; auto: volta ao normal; dismiss: fecha o aviso que esta na tela."""
+    a = (request.get_json(force=True, silent=True) or {}).get("a", "")
+    cfg = config.load()
+    if a == "dismiss":
+        with lock:
+            if state["notes"]:
+                state["notes"].pop(0)
+    elif a == "next":
+        ids = [s["id"] for s in cfg["screens"]]
+        cur = active_screen(cfg)["id"]
+        nxt = ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else ids[0]
+        with lock:
+            state["override"] = {"screen": nxt, "until": time.time() + cfg["touch_minutes"] * 60}
+    elif a == "wake":
+        # tela apagada pelo horario: acende mostrando a tela normal por touch_minutes
+        with lock:
+            state["override"] = {"screen": mode_screen(cfg)["id"], "until": time.time() + cfg["touch_minutes"] * 60}
+    elif a == "auto":
+        with lock:
+            state["override"] = None
+    else:
+        return jsonify({"error": "acao invalida"}), 400
+    return jsonify({"ok": True, "screen": active_screen(cfg)["id"]})
 
 
 @app.post("/api/metrics")
@@ -493,9 +662,15 @@ def api_state():
         except Exception:
             pass
     active = active_screen(cfg)
+    ov = touch_override()
     return jsonify({
         "now": time.time(),
         "config": cfg,
+        "notes": s["notes"],
+        "override": ov,
+        "rule": schedule_rule(cfg),
+        "display": display_cfg(cfg),
+        "icons": sorted(PX_ICONS),
         "pc": {"online": pc_online(cfg), "at": s["sys_at"], "agent": s["agent"]},
         "device": s["device"],
         "active": active["id"],
@@ -528,6 +703,31 @@ def api_config():
     if "quotes" in changes:
         q = [p for p in changes["quotes"] if p in quotes.KNOWN] if isinstance(changes["quotes"], list) else []
         changes["quotes"] = list(dict.fromkeys(q))[:4]
+    if "light" in changes:
+        li = changes["light"] if isinstance(changes["light"], dict) else {}
+        changes["light"] = {k: v for k, v in {
+            "auto": bool(li["auto"]) if "auto" in li else None,
+            "dark": _clamp(li["dark"], 0, 4095, 3000) if "dark" in li else None,
+            "bright": _clamp(li["bright"], 0, 4095, 300) if "bright" in li else None,
+            "min": _clamp(li["min"], 0, 255, 15) if "min" in li else None,
+            "max": _clamp(li["max"], 0, 255, 255) if "max" in li else None,
+        }.items() if v is not None}
+    if "schedule" in changes:
+        sc = changes["schedule"] if isinstance(changes["schedule"], dict) else {}
+        out = {}
+        if "enabled" in sc:
+            out["enabled"] = bool(sc["enabled"])
+        if "rules" in sc:
+            rules = []
+            for r in sc["rules"] if isinstance(sc["rules"], list) else []:
+                if _minutes(r.get("from", "")) < 0 or _minutes(r.get("to", "")) < 0:
+                    return jsonify({"error": "horario invalido (use HH:MM)"}), 400
+                rules.append({"from": r["from"], "to": r["to"], "screen": str(r.get("screen") or "")[:24],
+                              "brightness": _clamp(r.get("brightness", -1), -1, 255, -1), "off": bool(r.get("off"))})
+            out["rules"] = rules[:8]
+        changes["schedule"] = out
+    if "touch_minutes" in changes:
+        changes["touch_minutes"] = _clamp(changes["touch_minutes"], 1, 240, 15)
     before = config.load()
     cfg = config.update(changes)
     if cfg["city"] != before["city"]:

@@ -39,7 +39,7 @@ def fetch(lat: float, lon: float) -> dict:
             "longitude": lon,
             "current": "temperature_2m,weather_code,is_day,relative_humidity_2m",
             "hourly": "temperature_2m,weather_code,precipitation_probability",
-            "daily": "temperature_2m_max,temperature_2m_min",
+            "daily": "temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset,precipitation_probability_max",
             "timezone": TZ_NAME,
             "forecast_days": 2,
         },
@@ -52,8 +52,11 @@ def fetch(lat: float, lon: float) -> dict:
     # As 4 proximas horas cheias depois de agora (horarios do Open-Meteo vem no fuso local, sem tz).
     now = datetime.now(TZ).replace(minute=0, second=0, microsecond=0, tzinfo=None)
     hours = []
+    rain_now = None
     for i, ts in enumerate(hourly["time"]):
         t = datetime.fromisoformat(ts)
+        if t == now:
+            rain_now = hourly["precipitation_probability"][i]
         if t > now:
             hours.append({
                 "lbl": f"{t.hour}h",
@@ -65,6 +68,7 @@ def fetch(lat: float, lon: float) -> dict:
             break
 
     ic = icon_for(cur["weather_code"])
+    hm = lambda s: s[11:16] if s else ""  # "2026-11-19T05:58" -> "05:58"
     return {
         "tc": round(cur["temperature_2m"]),
         "hum": cur.get("relative_humidity_2m"),
@@ -73,6 +77,16 @@ def fetch(lat: float, lon: float) -> dict:
         "day": int(cur.get("is_day", 1)),
         "mn": round(daily["temperature_2m_min"][0]),
         "mx": round(daily["temperature_2m_max"][0]),
+        "rain": rain_now if rain_now is not None else (hours[0]["rain"] if hours else None),
+        "rain_max": daily["precipitation_probability_max"][0],
+        "sunrise": hm(daily["sunrise"][0]),
+        "sunset": hm(daily["sunset"][0]),
+        "tomorrow": {
+            "mn": round(daily["temperature_2m_min"][1]),
+            "mx": round(daily["temperature_2m_max"][1]),
+            "ic": icon_for(daily["weather_code"][1]),
+            "rain": daily["precipitation_probability_max"][1],
+        },
         "hours": hours,
     }
 

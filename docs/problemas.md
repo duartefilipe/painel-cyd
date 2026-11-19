@@ -18,6 +18,10 @@ O cabeçalho da placa fica vermelho e mostra o motivo quando passa 5 s sem dados
 | Relógio sem animação (metade de baixo preta) | faltou memória para o sprite da animação | veja `sem memoria para a animacao` no monitor serial; escolha **Sem animacao** ou reinicie a placa |
 | `pio run -e cyd-ota` falha com **"Authentication Failed"** | `PAINEL_TOKEN` do ambiente diferente do gravado na placa | use o mesmo token configurado no portal da placa |
 | `pio run -e cyd-ota` falha com **"No response from device"** | placa ainda com firmware sem OTA, IP errado, ou firewall do Windows bloqueando a resposta | primeira gravação pelo USB; confira o IP no card Placa; libere o Python no firewall |
+| Toque **não responde** | firmware sem toque, ou servidor antigo sem `/api/touch` | grave o firmware atual; faça **Pull and redeploy** da stack; o monitor serial mostra `toque: next -> 200` |
+| Brilho automático **não muda** | sensor sem calibração (escuro e claro com o mesmo valor) | no card **Brilho automático**, use "Usar leitura atual" com o sensor coberto e depois iluminado |
+| Tela **apagou** sozinha | regra de horário com **apagar** | um toque acende por `touch_minutes`; ajuste no card **Horários** |
+| Aviso **não aparece** | `text` vazio, token errado (401) ou servidor antigo | confira a resposta do `curl`; o card **Avisos na tela** lista a fila |
 | Cores em **negativo** (fundo claro) | lote da CYD com painel invertido | marque **inverter** no card Placa |
 | Tela **toda branca** depois de gravar | variante da CYD com controlador ST7789 | troque o driver no `platformio.ini` ([instalacao.md](instalacao.md#hardware)) |
 | Google: **"Erro 403: access_denied"** no login | app em "Testando" e o seu e-mail não está em Usuários de teste | adicione o e-mail ([google-agenda.md](google-agenda.md#2-tela-de-consentimento)) |

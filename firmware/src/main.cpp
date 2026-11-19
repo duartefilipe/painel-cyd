@@ -22,6 +22,7 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <XPT2046_Touchscreen.h>
 
 #include "pixel_draw.h"
 #include "scenes.h"
@@ -31,15 +32,23 @@ TFT_eSprite spr(&tft);
 TFT_eSprite sceneSpr(&tft);  // animacao do relogio: 8 bits, alocado so no modo relogio
 Preferences prefs;
 
+// Toque da CYD: XPT2046 num SPI separado do da tela (a tela usa o HSPI).
+constexpr int T_CLK = 25, T_MISO = 39, T_MOSI = 32, T_CS = 33, T_IRQ = 36;
+SPIClass touchSpi(VSPI);
+XPT2046_Touchscreen ts(T_CS, T_IRQ);
+// Sensor de luz (LDR) da CYD.
+constexpr int PIN_LDR = 34;
+
 // ---------- cores (tokens) ----------
 constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
-constexpr uint16_t C_BG = rgb(12, 14, 18);
+constexpr uint16_t C_BG = rgb(10, 12, 17);
+constexpr uint16_t C_CARD = rgb(24, 28, 37);    // cartoes sobre o fundo (visual integrado, sem divisorias)
 constexpr uint16_t C_TEXT = rgb(232, 234, 238);
 constexpr uint16_t C_MUTED = rgb(130, 138, 152);
 constexpr uint16_t C_LINE = rgb(44, 50, 62);
-constexpr uint16_t C_TRACK = rgb(34, 38, 48);
+constexpr uint16_t C_TRACK = rgb(40, 46, 60);
 constexpr uint16_t C_ACCENT = rgb(255, 140, 40);
 constexpr uint16_t C_ACCENT_DIM = rgb(110, 62, 22);
 constexpr uint16_t C_GOOD = rgb(80, 200, 120);
@@ -63,7 +72,7 @@ constexpr unsigned long POLL_MS = 1000;
 constexpr int PIN_BOOT = 0;
 
 // ---------- estado ----------
-struct Hour { char lbl[6]; int temp; char ic; };
+struct Hour { char lbl[6]; int temp; char ic; int rain; };
 struct Ev { char when[18]; char title[48]; bool now; };
 struct Fx { char lbl[5]; char val[14]; float ch; };
 
@@ -82,6 +91,10 @@ struct State {
   bool day = true;
   Hour h[4];
   int nh = 0;
+  int hu = 0, rp = 0, rx = 0;          // umidade, chuva agora, chuva maxima do dia
+  char sr[6] = "", ss[6] = "";         // nascer e por do sol
+  int tmMn = 0, tmMx = 0, tmRain = 0;  // amanha
+  char tmIc = 'C';
   bool fxOk = false;
   char fxAt[6] = "";
   char fxMsg[32] = "";
@@ -133,6 +146,20 @@ uint32_t pxT0 = 0, pxTr = 99;
 char srvUrl[96] = "http://192.168.31.229:8765";
 char srvToken[72] = "";
 char linkErr[32] = "";  // motivo de estar sem dados, para o cabecalho
+
+// ---------- aviso (POST /api/notify) por cima de qualquer tela ----------
+bool ntOn = false;
+long ntId = 0;
+char ntTx[84] = "", ntIc[10] = "bell";
+uint16_t ntCol = 0xFFFF;
+uint32_t ntT0 = 0;  // quadro em que o aviso apareceu (rolagem no relogio/pixel)
+
+// ---------- brilho: manual, automatico pelo LDR, ou apagado pelo horario ----------
+bool autoBr = false, screenOff = false;
+int ldrDark = 3000, ldrBright = 300, brMin = 15, brMax = 255;
+float ldrAvg = -1;     // leitura suavizada do sensor
+int brNow = -1;        // brilho aplicado agora (vai ate o alvo aos poucos)
+unsigned long lastLight = 0;
 
 // ---------- utilidades de desenho ----------
 uint16_t semaforo(float pct) {
@@ -193,11 +220,11 @@ void weatherIcon(int x, int y, float k, char ic, bool day) {
   switch (ic) {
     case 'S':
       if (day) sun(x + 18 * k, y + 14 * k, k, 8 * k);
-      else moon(x + 18 * k, y + 14 * k, 9 * k, C_BG);
+      else moon(x + 18 * k, y + 14 * k, 9 * k, C_CARD);
       break;
     case 'P':
       if (day) sun(x + 12 * k, y + 9 * k, k, 6 * k);
-      else moon(x + 12 * k, y + 9 * k, 6 * k, C_BG);
+      else moon(x + 12 * k, y + 9 * k, 6 * k, C_CARD);
       cloud(x + 2 * k, y + 3 * k, k, C_CLOUD);
       break;
     case 'F':
@@ -233,201 +260,303 @@ void arrow(int x, int y, bool down, uint16_t c) {
 // ---------- secoes ----------
 bool isStale() { return !everGot || millis() - lastMsg > (mode != M_GRID ? POLL_ANIM_MS * 3 : STALE_MS); }
 
+const char* weatherIconName(char ic, bool day);  // definida no bloco do relogio
+
+// Visual integrado: um fundo unico (C_BG) e cada informacao num cartao arredondado
+// (C_CARD). Nao ha linhas dividindo regioes; o espaco entre cartoes faz a separacao.
+void card(int x, int y, int w, int h) { spr.fillRoundRect(x, y, w, h, 9, C_CARD); }
+
 void drawHeader() {
   spr.createSprite(W, H_HEADER);
   spr.fillSprite(C_BG);
   bool stale = isStale();
   spr.setTextDatum(ML_DATUM);
   if (stale) {
-    spr.fillCircle(10, 14, 4, C_BAD);
+    spr.fillCircle(12, 14, 4, C_BAD);
     spr.setTextColor(C_BAD, C_BG);
-    spr.drawString(linkErr[0] ? linkErr : "conectando...", 20, 14, 2);
+    spr.drawString(linkErr[0] ? linkErr : "conectando...", 22, 14, 2);
   } else {
-    spr.fillCircle(10, 14, 4, S.pc ? C_GOOD : C_BLUE);
+    spr.fillCircle(12, 14, 4, S.pc ? C_GOOD : C_BLUE);
     spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString(S.data, 20, 14, 2);
-    // nome da tela, discreto, depois da data
+    spr.drawString(S.data, 22, 14, 2);
     if (S.layN[0]) {
       spr.setTextColor(C_MUTED, C_BG);
-      spr.drawString(S.layN, 30 + spr.textWidth(S.data, 2), 15, 1);
+      spr.drawString(S.layN, 32 + spr.textWidth(S.data, 2), 15, 1);
     }
   }
   spr.setTextDatum(MR_DATUM);
   spr.setTextColor(stale ? C_MUTED : C_TEXT, C_BG);
-  spr.drawString(S.hora, W - 8, 15, 4);
-  spr.drawFastHLine(0, H_HEADER - 1, W, C_LINE);
+  spr.drawString(S.hora, W - 10, 15, 4);
   spr.pushSprite(0, 0);
   spr.deleteSprite();
 }
 
 void barRow(int y, const char* label, float pct, const char* val) {
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
-  spr.drawString(label, 8, y, 2);
+  spr.setTextColor(C_MUTED, C_CARD);
+  spr.drawString(label, 12, y, 2);
   spr.setTextDatum(TR_DATUM);
-  spr.setTextColor(C_TEXT, C_BG);
-  spr.drawString(val, 152, y, 2);
-  int bx = 50, bw = 58, by = y + 5;
+  spr.setTextColor(C_TEXT, C_CARD);
+  spr.drawString(val, 148, y, 2);
+  int bx = 54, bw = 54, by = y + 5;
   spr.fillRoundRect(bx, by, bw, 7, 3, C_TRACK);
   int fw = constrain((int)(bw * pct / 100.0f), 0, bw);
   if (fw > 0) spr.fillRoundRect(bx, by, max(fw, 4), 7, 3, semaforo(pct));
 }
 
-// Cada widget desenha num sprite de 160x124 (coordenadas locais).
+// Cada widget desenha dentro de um cartao de ~150x120 num sprite de 160x124.
 void wSystem() {
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
-  spr.drawString("SISTEMA", 8, 4, 2);
-
+  spr.setTextColor(C_MUTED, C_CARD);
+  spr.drawString("SISTEMA", 12, 6, 2);
   if (!S.hasSys) {
-    spr.drawString("PC desconectado", 8, 30, 2);
+    spr.drawString("PC desconectado", 12, 32, 2);
     return;
   }
   char buf[24];
   spr.setTextDatum(TR_DATUM);
-  spr.setTextColor(C_TEXT, C_BG);
+  spr.setTextColor(C_TEXT, C_CARD);
   snprintf(buf, sizeof(buf), "CPU %.0f%%", S.cpu);
-  spr.drawString(buf, 152, 4, 2);
+  spr.drawString(buf, 148, 6, 2);
 
-  const int gx = 8, gy = 24, gw = 144, gh = 34;
-  spr.fillRect(gx, gy, gw, gh, C_TRACK);
-  int start = HIST_N - histCount;
-  for (int i = 0; i < histCount; i++) {
-    int v = cpuHist[i];
+  const int gx = 12, gy = 25, gw = 136, gh = 32;
+  spr.fillRoundRect(gx, gy, gw, gh, 4, C_TRACK);
+  int n = min(histCount, gw / 2), start = histCount - n;
+  for (int i = 0; i < n; i++) {
+    int v = cpuHist[start + i];
     int hpx = max(1, v * gh / 100);
-    int x = gx + (start + i) * 2;
+    int x = gx + gw - (n - i) * 2;
     spr.fillRect(x, gy + gh - hpx, 2, hpx, C_ACCENT_DIM);
     spr.drawFastHLine(x, gy + gh - hpx, 2, C_ACCENT);
   }
 
   snprintf(buf, sizeof(buf), "%.0f%%", S.ram);
-  barRow(64, "RAM", S.ram, buf);
+  barRow(62, "RAM", S.ram, buf);
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
+  spr.setTextColor(C_MUTED, C_CARD);
   snprintf(buf, sizeof(buf), "%.1f / %.0f GB", S.ru, S.rt);
-  spr.drawString(buf, 50, 80, 1);
-
+  spr.drawString(buf, 54, 78, 1);
   snprintf(buf, sizeof(buf), "%.0f%%", S.dsk);
-  barRow(88, "DISCO", S.dsk, buf);
+  barRow(86, "DISCO", S.dsk, buf);
 
   char r[16];
-  arrow(8, 104, true, C_GOOD);
+  arrow(12, 103, true, C_GOOD);
   fmtRate(S.dn, r, sizeof(r));
-  spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_TEXT, C_BG);
-  spr.drawString(r, 19, 105, 1);
-  arrow(84, 104, false, C_BLUE);
+  spr.setTextColor(C_TEXT, C_CARD);
+  spr.drawString(r, 23, 104, 1);
+  arrow(84, 103, false, C_BLUE);
   fmtRate(S.up, r, sizeof(r));
-  spr.drawString(r, 95, 105, 1);
+  spr.drawString(r, 95, 104, 1);
 }
 
 void wWeather() {
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
+  spr.setTextColor(C_MUTED, C_CARD);
   char city[28];
-  fitText(S.city[0] ? S.city : "TEMPO", city, sizeof(city), 144, 2);
-  spr.drawString(city, 10, 4, 2);
-
+  fitText(S.city[0] ? S.city : "TEMPO", city, sizeof(city), 96, 2);
+  spr.drawString(city, 12, 6, 2);
   if (!S.wOk) {
-    spr.drawString("sem previsao", 10, 30, 2);
+    spr.drawString("sem previsao", 12, 32, 2);
     return;
   }
-  weatherIcon(10, 26, 1.1f, S.ic, S.day);
+  // umidade no canto
   char buf[16];
+  snprintf(buf, sizeof(buf), "%d%%", S.hu);
+  spr.setTextDatum(TR_DATUM);
+  spr.drawString(buf, 148, 6, 2);
+  pxIconBig(spr, "drop", 148 - spr.textWidth(buf, 2) - 11, 9, 1);
+
+  weatherIcon(10, 26, 1.05f, S.ic, S.day);
+  spr.setTextDatum(TL_DATUM);
   snprintf(buf, sizeof(buf), "%d", S.tc);
-  spr.setTextColor(C_TEXT, C_BG);
-  spr.drawString(buf, 62, 24, 4);
+  spr.setTextColor(C_TEXT, C_CARD);
+  spr.drawString(buf, 60, 25, 4);
   int tw = spr.textWidth(buf, 4);
-  degree(62 + tw + 4, 28, 3, C_TEXT);
-  spr.drawString("C", 62 + tw + 10, 24, 4);
+  degree(60 + tw + 4, 29, 3, C_TEXT);
+  spr.drawString("C", 60 + tw + 10, 25, 4);
+  // minima/maxima e chance de chuva do dia
+  spr.setTextColor(C_MUTED, C_CARD);
+  snprintf(buf, sizeof(buf), "%d/%d", S.mn, S.mx);
+  spr.drawString(buf, 60, 51, 2);
+  int bx = 60 + spr.textWidth(buf, 2) + 2;
+  degree(bx + 2, 55, 2, C_MUTED);
+  snprintf(buf, sizeof(buf), "%d%%", S.rx);
+  spr.setTextColor(C_BLUE, C_CARD);
+  spr.drawString(buf, bx + 18, 51, 2);
 
-  spr.setTextColor(C_MUTED, C_BG);
-  snprintf(buf, sizeof(buf), "%d / %d", S.mn, S.mx);
-  spr.drawString(buf, 62, 52, 2);
-  degree(62 + spr.textWidth(buf, 2) + 4, 56, 2, C_MUTED);
-
+  // proximas horas: rotulo, icone, temperatura e chance de chuva
   for (int i = 0; i < S.nh; i++) {
-    int cx = 10 + i * 37 + 17;
+    int cx = 12 + i * 35 + 15;
     spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(C_MUTED, C_BG);
-    spr.drawString(S.h[i].lbl, cx, 74, 2);
-    weatherIcon(cx - 10, 92, 0.55f, S.h[i].ic, true);
-    spr.setTextColor(C_TEXT, C_BG);
+    spr.setTextColor(C_MUTED, C_CARD);
+    spr.drawString(S.h[i].lbl, cx, 70, 1);
+    weatherIcon(cx - 10, 79, 0.5f, S.h[i].ic, true);
+    spr.setTextColor(C_TEXT, C_CARD);
     snprintf(buf, sizeof(buf), "%d", S.h[i].temp);
-    spr.drawString(buf, cx - 2, 108, 2);
-    degree(cx - 2 + spr.textWidth(buf, 2) / 2 + 3, 111, 1, C_TEXT);
+    spr.drawString(buf, cx - 2, 95, 2);
+    degree(cx - 2 + spr.textWidth(buf, 2) / 2 + 3, 98, 1, C_TEXT);
+    if (S.h[i].rain >= 10) {
+      snprintf(buf, sizeof(buf), "%d%%", S.h[i].rain);
+      spr.setTextColor(C_BLUE, C_CARD);
+      spr.drawString(buf, cx, 111, 1);
+    }
+  }
+}
+
+// Tempo detalhado: umidade, chuva, nascer/por do sol e amanha.
+void wWeatherDetail() {
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(C_MUTED, C_CARD);
+  spr.drawString("DETALHES", 12, 6, 2);
+  if (!S.wOk) {
+    spr.drawString("sem previsao", 12, 32, 2);
+    return;
+  }
+  char v[24];
+  struct Row { const char* icon; const char* label; };
+  const Row rows[4] = {{"drop", "umidade"}, {"rain", "chuva"}, {"sunrise", "sol"},
+                       {weatherIconName(S.tmIc, true), "amanha"}};
+  for (int i = 0; i < 4; i++) {
+    int y = 27 + i * 23;
+    pxIconBig(spr, rows[i].icon, 12, y, 2);
+    spr.setTextDatum(TL_DATUM);
+    spr.setTextColor(C_MUTED, C_CARD);
+    spr.drawString(rows[i].label, 34, y + 1, 2);
+    if (i == 0) snprintf(v, sizeof(v), "%d%%", S.hu);
+    else if (i == 1) snprintf(v, sizeof(v), "%d%% / %d%%", S.rp, S.rx);
+    else if (i == 2) snprintf(v, sizeof(v), "%s %s", S.sr, S.ss);
+    else snprintf(v, sizeof(v), "%d/%d %d%%", S.tmMn, S.tmMx, S.tmRain);
+    spr.setTextDatum(TR_DATUM);
+    spr.setTextColor(C_TEXT, C_CARD);
+    spr.drawString(v, 148, y + 1, 2);
   }
 }
 
 void wQuotes() {
   spr.setTextDatum(TL_DATUM);
-  spr.setTextColor(C_MUTED, C_BG);
-  spr.drawString("COTACOES", 8, 4, 2);
+  spr.setTextColor(C_MUTED, C_CARD);
+  spr.drawString("COTACOES", 12, 6, 2);
   if (S.fxAt[0]) {
     spr.setTextDatum(TR_DATUM);
-    spr.drawString(S.fxAt, 152, 6, 1);
+    spr.drawString(S.fxAt, 148, 8, 1);
   }
   if (!S.fxOk) {
     spr.setTextDatum(TL_DATUM);
-    spr.drawString(S.fxMsg[0] ? S.fxMsg : "sem cotacoes", 8, 30, 2);
+    spr.drawString(S.fxMsg[0] ? S.fxMsg : "sem cotacoes", 12, 32, 2);
     return;
   }
-  // Ate 4 linhas. Esquerda: rotulo e, embaixo, a variacao do dia. Direita: valor em R$.
-  int rowH = S.nfx <= 3 ? 31 : 24;
+  int rowH = S.nfx <= 3 ? 30 : 23;
   for (int i = 0; i < S.nfx; i++) {
     const Fx& q = S.fx[i];
-    int y = 24 + i * rowH;
+    int y = 26 + i * rowH;
     spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(C_MUTED, C_BG);
-    spr.drawString(q.lbl, 8, y, 2);
+    spr.setTextColor(C_MUTED, C_CARD);
+    spr.drawString(q.lbl, 12, y, 2);
     char ch[12];
     snprintf(ch, sizeof(ch), "%+.1f%%", q.ch);
-    uint16_t c = q.ch >= 0 ? C_GOOD : C_BAD;
-    spr.setTextColor(c, C_BG);
-    spr.drawString(ch, 8, y + 15, 1);
+    spr.setTextColor(q.ch >= 0 ? C_GOOD : C_BAD, C_CARD);
+    spr.drawString(ch, 12, y + 15, 1);
     spr.setTextDatum(TR_DATUM);
-    spr.setTextColor(C_TEXT, C_BG);
-    char v[16];
-    fitText(q.val, v, sizeof(v), 100, 4);
-    spr.drawString(v, 152, y, 4);
+    spr.setTextColor(C_TEXT, C_CARD);
+    char vv[16];
+    fitText(q.val, vv, sizeof(vv), 96, 4);
+    spr.drawString(vv, 148, y, 4);
   }
 }
 
 void drawHalf(int x, const char* kind) {
   spr.createSprite(HALF, H_MID);
   spr.fillSprite(C_BG);
-  if (!strcmp(kind, "sys")) wSystem();
-  else if (!strcmp(kind, "w")) wWeather();
-  else if (!strcmp(kind, "fx")) wQuotes();
-  if (x > 0) spr.drawFastVLine(0, 6, H_MID - 12, C_LINE);
+  if (strcmp(kind, "none") != 0) {
+    // cartao esquerdo encosta na margem de 6 px; o direito deixa 6 px no meio
+    if (x == 0) spr.fillRoundRect(6, 0, 151, 120, 9, C_CARD);
+    else spr.fillRoundRect(3, 0, 151, 120, 9, C_CARD);
+    if (!strcmp(kind, "sys")) wSystem();
+    else if (!strcmp(kind, "w")) wWeather();
+    else if (!strcmp(kind, "wd")) wWeatherDetail();
+    else if (!strcmp(kind, "fx")) wQuotes();
+  }
   spr.pushSprite(x, Y_MID);
+  spr.deleteSprite();
+}
+
+// Quebra o texto em linhas que cabem em maxW pixels (fonte f). Devolve quantas linhas.
+int wrapText(const char* src, char lines[][44], int maxLines, int maxW, uint8_t f) {
+  int n = 0;
+  char cur[44] = "";
+  char word[44];
+  const char* p = src;
+  while (*p && n < maxLines) {
+    while (*p == ' ') p++;
+    int wl = 0;
+    while (p[wl] && p[wl] != ' ' && wl < 43) wl++;
+    if (!wl) break;
+    memcpy(word, p, wl);
+    word[wl] = '\0';
+    p += wl;
+    char tryL[88];
+    snprintf(tryL, sizeof(tryL), "%s%s%s", cur, cur[0] ? " " : "", word);
+    if (spr.textWidth(tryL, f) <= maxW || !cur[0]) {
+      strlcpy(cur, tryL, sizeof(cur));
+    } else {
+      strlcpy(lines[n++], cur, 44);
+      strlcpy(cur, word, sizeof(cur));
+    }
+  }
+  if (cur[0] && n < maxLines) strlcpy(lines[n++], cur, 44);
+  return n;
+}
+
+// Aviso no lugar dos dois cartoes do meio (tela em regioes).
+void drawNoteMid() {
+  spr.createSprite(W, H_MID);
+  spr.fillSprite(C_BG);
+  spr.fillRoundRect(6, 0, W - 12, 120, 10, C_CARD);
+  spr.drawRoundRect(6, 0, W - 12, 120, 10, ntCol);
+  pxIconBig(spr, ntIc, 20, 44, 4);
+  char lines[4][44];
+  uint8_t f = 4;
+  int n = wrapText(ntTx, lines, 3, W - 84, 4);
+  if (n == 3 && strlen(ntTx) > 48) {  // texto longo: fonte menor, ate 4 linhas
+    f = 2;
+    n = wrapText(ntTx, lines, 4, W - 84, 2);
+  }
+  int lh = f == 4 ? 28 : 18;
+  int y0 = (120 - n * lh) / 2;
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextColor(ntCol, C_CARD);
+  for (int i = 0; i < n; i++) spr.drawString(lines[i], 66, y0 + i * lh, f);
+  spr.setTextDatum(BR_DATUM);
+  spr.setTextColor(C_MUTED, C_CARD);
+  spr.drawString("toque para fechar", W - 16, 114, 1);
+  spr.pushSprite(0, Y_MID);
   spr.deleteSprite();
 }
 
 void drawAgenda() {
   spr.createSprite(W, H_AGENDA);
   spr.fillSprite(C_BG);
-  spr.drawFastHLine(0, 0, W, C_LINE);
   if (!strcmp(S.layB, "ev")) {
+    spr.fillRoundRect(6, 0, W - 12, H_AGENDA - 4, 9, C_CARD);
     spr.setTextDatum(TL_DATUM);
-    spr.setTextColor(C_MUTED, C_BG);
-    spr.drawString("AGENDA", 8, 4, 2);
-
+    spr.setTextColor(C_MUTED, C_CARD);
+    spr.drawString("AGENDA", 14, 5, 2);
     if (strcmp(S.evSt, "ok") != 0 || S.nev == 0) {
       const char* msg = S.evMsg[0] ? S.evMsg
                       : (strcmp(S.evSt, "ok") == 0 ? "nada nos proximos dias" : "Google nao conectado");
-      spr.drawString(msg, 8, 24, 2);
+      spr.drawString(msg, 14, 26, 2);
     } else {
-      for (int i = 0; i < S.nev; i++) {
-        int y = 22 + i * 16;
+      int n = min(S.nev, 3);
+      for (int i = 0; i < n; i++) {
+        int y = 23 + i * 19;
         const Ev& e = S.ev[i];
-        if (e.now) spr.fillRect(0, y + 1, 3, 13, C_ACCENT);
-        spr.setTextColor(e.now ? C_ACCENT : C_BLUE, C_BG);
-        spr.drawString(e.when, 8, y, 2);
+        if (e.now) spr.fillRoundRect(9, y + 1, 3, 14, 1, C_ACCENT);
+        spr.setTextColor(e.now ? C_ACCENT : C_BLUE, C_CARD);
+        spr.drawString(e.when, 16, y, 2);
         char t[52];
-        fitText(e.title, t, sizeof(t), W - 106, 2);
-        spr.setTextColor(C_TEXT, C_BG);
-        spr.drawString(t, 98, y, 2);
+        fitText(e.title, t, sizeof(t), W - 124, 2);
+        spr.setTextColor(C_TEXT, C_CARD);
+        spr.drawString(t, 104, y, 2);
       }
     }
   }
@@ -507,6 +636,18 @@ void clockFrame() {
     }
     if (buf[0]) pxBig(s, buf, evX, evY, evSize, col, evX, 316, clockFont);
   }
+
+  // aviso: faixa escura embaixo, com icone e texto rolando
+  if (ntOn) {
+    const int by = 172, bh = 56;
+    s.fillRoundRect(8, by, W - 16, bh, 10, TFT_BLACK);
+    s.drawRoundRect(8, by, W - 16, bh, 10, ntCol);
+    pxIconBig(s, ntIc, 18, by + 12, 4);
+    const int x0 = 60, x1 = W - 16, k = 3;
+    int tw = pxTextW(ntTx, k, 0), avail = x1 - x0;
+    int off = tw <= avail ? 0 : avail - (int)(((frameNo - ntT0) * 2) % (tw + avail));
+    pxBig(s, ntTx, x0 + off, by + 21, k, ntCol, x0, x1, 0);
+  }
   s.pushSprite(0, 0);
 }
 
@@ -533,7 +674,16 @@ uint32_t pixelBuild(PxBuf b, const PxApp& a, uint32_t f) {
 
 void pixelFrame() {
   TFT_eSprite& s = sceneSpr;
-  if (nPxApps == 0) {
+  if (ntOn) {
+    // aviso no lugar dos apps enquanto estiver ativo
+    PxApp a;
+    strlcpy(a.icon, ntIc, sizeof(a.icon));
+    a.col = ntCol;
+    a.dur = 60;
+    a.clk = false;
+    strlcpy(a.tx, ntTx, sizeof(a.tx));
+    pixelBuild(pxShow, a, frameNo - ntT0);
+  } else if (nPxApps == 0) {
     pxBufClear(pxShow);
     pxBufText(pxShow, "SEM APPS", 1, 1, C_MUTED, 0, 32);
   } else {
@@ -602,8 +752,12 @@ void sceneStart() {
 void drawAll() {
   if (mode != M_GRID) return;  // modos animados desenham no loop
   drawHeader();
-  drawHalf(0, S.layL);
-  drawHalf(HALF, S.layR);
+  if (ntOn) {
+    drawNoteMid();
+  } else {
+    drawHalf(0, S.layL);
+    drawHalf(HALF, S.layR);
+  }
   drawAgenda();
 }
 
@@ -633,11 +787,30 @@ void applyConfig(int br, int inv, int rot) {
     cfgInv = inv;
     tft.invertDisplay(cfgInv);
   }
-  if (br != cfgBr) {
-    cfgBr = br;
-    analogWrite(TFT_BL, cfgBr);
-  }
+  cfgBr = br;  // o brilho e aplicado aos poucos em lightLoop()
   if (redraw) tft.fillScreen(C_BG);
+}
+
+// Brilho: alvo = 0 (horario apagado), automatico pelo sensor de luz, ou o manual.
+// Muda aos poucos para nao dar "pulo" de luz.
+void lightLoop() {
+  if (millis() - lastLight < 100) return;
+  lastLight = millis();
+  int raw = analogRead(PIN_LDR);
+  ldrAvg = ldrAvg < 0 ? raw : ldrAvg * 0.9f + raw * 0.1f;
+  int target = cfgBr;
+  if (screenOff) {
+    target = 0;
+  } else if (autoBr && ldrDark != ldrBright) {
+    // dark/bright sao leituras calibradas pelo painel; funciona em qualquer sentido do sensor
+    float t = (ldrAvg - ldrDark) / (float)(ldrBright - ldrDark);
+    t = constrain(t, 0.0f, 1.0f);
+    target = brMin + (int)(t * (brMax - brMin));
+  }
+  if (brNow < 0) brNow = target;
+  int d = target - brNow;
+  if (d) brNow += d > 0 ? max(1, d / 6) : min(-1, d / 6);
+  analogWrite(TFT_BL, brNow);
 }
 
 // ---------- parse ----------
@@ -651,7 +824,31 @@ bool handlePayload(const String& body) {
   }
 
   JsonObject cfg = doc["cfg"];
-  if (!cfg.isNull()) applyConfig(cfg["br"] | cfgBr, cfg["inv"] | cfgInv, cfg["rot"] | cfgRot);
+  if (!cfg.isNull()) {
+    applyConfig(cfg["br"] | cfgBr, cfg["inv"] | cfgInv, cfg["rot"] | cfgRot);
+    autoBr = (cfg["ab"] | 0) == 1;
+    screenOff = (cfg["off"] | 0) == 1;
+    ldrDark = cfg["ld"] | ldrDark;
+    ldrBright = cfg["lb"] | ldrBright;
+    brMin = cfg["bm"] | brMin;
+    brMax = cfg["bx"] | brMax;
+  }
+
+  // aviso por cima da tela
+  JsonObject nt = doc["nt"];
+  bool wasNt = ntOn;
+  if (!nt.isNull()) {
+    long id = nt["id"] | 0L;
+    if (!ntOn || id != ntId) ntT0 = frameNo;
+    ntOn = true;
+    ntId = id;
+    strlcpy(ntTx, nt["tx"] | "", sizeof(ntTx));
+    strlcpy(ntIc, nt["ic"] | "bell", sizeof(ntIc));
+    ntCol = nt["c"] | 0xFFFF;
+  } else {
+    ntOn = false;
+  }
+  if (wasNt && !ntOn && mode == M_PIXEL) pxT0 = frameNo, pxTr = 99;  // volta aos apps do inicio do app atual
 
   strlcpy(S.hora, doc["t"] | "--:--", sizeof(S.hora));
   strlcpy(S.data, doc["d"] | "", sizeof(S.data));
@@ -754,6 +951,19 @@ bool handlePayload(const String& body) {
       strlcpy(h.lbl, it[0] | "", sizeof(h.lbl));
       h.temp = it[1] | 0;
       h.ic = (it[2] | "C")[0];
+      h.rain = it[3] | 0;
+    }
+    S.hu = w["hu"] | 0;
+    S.rp = w["rp"] | 0;
+    S.rx = w["rx"] | 0;
+    strlcpy(S.sr, w["sr"] | "", sizeof(S.sr));
+    strlcpy(S.ss, w["ss"] | "", sizeof(S.ss));
+    JsonArray tm = w["tm"];
+    if (!tm.isNull()) {
+      S.tmMn = tm[0] | 0;
+      S.tmMx = tm[1] | 0;
+      S.tmIc = (tm[2] | "C")[0];
+      S.tmRain = tm[3] | 0;
     }
   }
 
@@ -799,7 +1009,8 @@ void poll() {
     return;
   }
   HTTPClient http;
-  String url = String(srvUrl) + "/api/screen";
+  // leva a leitura do sensor de luz: o painel mostra ao vivo para calibrar o brilho automatico
+  String url = String(srvUrl) + "/api/screen?ldr=" + String((int)max(0.0f, ldrAvg));
   if (!http.begin(url)) {
     strlcpy(linkErr, "endereco invalido", sizeof(linkErr));
     return;
@@ -818,6 +1029,62 @@ void poll() {
     snprintf(linkErr, sizeof(linkErr), "servidor: HTTP %d", code);
   }
   http.end();
+}
+
+// ---------- toque na tela ----------
+// Toque curto: fecha o aviso; no pixel, proximo app; nas outras telas, proxima tela.
+// Segurar 1 s: no pixel, proxima tela; nas outras, volta ao automatico.
+// Com a tela apagada pelo horario, qualquer toque acorda.
+void sendTouch(const char* action) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  if (!http.begin(String(srvUrl) + "/api/touch")) return;
+  http.setTimeout(2000);
+  http.addHeader("Authorization", String("Bearer ") + srvToken);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(String("{\"a\":\"") + action + "\"}");
+  http.end();
+  Serial.printf("toque: %s -> %d\n", action, code);
+  lastPoll = 0;  // busca a tela nova ja no proximo loop
+}
+
+void onTap() {
+  if (screenOff) {
+    sendTouch("wake");
+  } else if (ntOn) {
+    ntOn = false;
+    drawAll();
+    sendTouch("dismiss");
+  } else if (mode == M_PIXEL && nPxApps > 1) {
+    memcpy(pxPrev, pxCur, sizeof(PxBuf));
+    pxIdx = (pxIdx + 1) % nPxApps;
+    pxT0 = frameNo;
+    pxTr = 0;
+  } else {
+    sendTouch("next");
+  }
+}
+
+void onHold() { sendTouch(mode == M_PIXEL ? "next" : "auto"); }
+
+void touchLoop() {
+  static bool down = false, held = false;
+  static unsigned long t0 = 0, lastUp = 0;
+  bool pressed = ts.tirqTouched() && ts.touched();
+  if (pressed) {
+    if (!down && millis() - lastUp > 150) {  // anti-repique
+      down = true;
+      held = false;
+      t0 = millis();
+    } else if (down && !held && millis() - t0 > 1000) {
+      held = true;
+      onHold();
+    }
+  } else if (down) {
+    down = false;
+    lastUp = millis();
+    if (!held && millis() - t0 > 40) onTap();
+  }
 }
 
 // ---------- atualizacao pelo Wi-Fi (OTA) ----------
@@ -925,12 +1192,20 @@ void setup() {
   tft.fillScreen(C_BG);
   pinMode(TFT_BL, OUTPUT);
   analogWrite(TFT_BL, cfgBr);
+  // sensor de luz: atenuacao 0 dB deixa o LDR da CYD mais sensivel
+  analogSetPinAttenuation(PIN_LDR, ADC_0db);
+  // toque no SPI proprio (VSPI); a tela continua no HSPI
+  touchSpi.begin(T_CLK, T_MISO, T_MOSI, T_CS);
+  ts.begin(touchSpi);
+  ts.setRotation(1);
   setupWifi();
   drawAll();
 }
 
 void loop() {
   ArduinoOTA.handle();
+  touchLoop();
+  lightLoop();
   if (millis() - lastPoll >= (mode != M_GRID ? POLL_ANIM_MS : POLL_MS)) {
     lastPoll = millis();
     poll();
